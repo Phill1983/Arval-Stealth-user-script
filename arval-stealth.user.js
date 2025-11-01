@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.0.7
+// @version      4.0.8
 // @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -11,7 +11,7 @@
 // @homepageURL  https://github.com/Phill1983/Arval-Stealth-user-script
 // @supportURL   https://github.com/Phill1983/Arval-Stealth-user-script/issues
 // @downloadURL  https://raw.githubusercontent.com/Phill1983/Arval-Stealth-user-script/main/arval-stealth.user.js
-// @updateURL    https://raw.githubusercontent.com/Phill1983/Arval-Stealth-user-script/main/arval-stealth.meta.js
+// @updateURL    https://raw.githubusercontent.com/Phill1983/Arval-Stealth-user-script/main/arval-stealth.user.js
 // ==/UserScript==
 
 
