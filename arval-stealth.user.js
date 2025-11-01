@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
 // @version      4.0.3
 // @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
-// @author       Phil
+// @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
 // @connect      serwisarval.pl
 // @run-at       document-start
