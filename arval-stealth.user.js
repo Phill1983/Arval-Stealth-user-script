@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.0.8
+// @version      4.0.9
 // @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -69,10 +69,34 @@
         `:root[${ATTR}="1"] [data-arval-left]{transform:translateX(-100%);width:0!important;min-width:0!important;overflow:hidden!important;position:absolute!important;left:0;top:0;height:0!important;pointer-events:none!important;visibility:hidden!important}`,
         `:root[${ATTR}="1"] [data-arval-main].columns{float:none!important;display:block!important;width:100%!important;max-width:100%!important;flex:1 1 auto!important}`,
         `:root[${ATTR}="1"] [data-arval-left].columns{float:none!important;}`,
-        `#${IDS.btn}{position:fixed;top:84px;left:10px;z-index:2147483647;width:30px;height:30px;border-radius:15px;display:flex;align-items:center;justify-content:center;font:600 14px/1 system-ui,Segoe UI,Arial,sans-serif;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 2px 10px rgba(0,0,0,.2);cursor:pointer;user-select:none}`,
+        `#${IDS.btn}{
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            width: 24px;
+            z-index: 2147483647;
+            border: none;
+            background: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none;
+            padding: 0;
+            border-right: 1px solid rgba(0,0,0,0.1);
+          }`,
+
+          `#${IDS.btn}::after{
+            content: "";
+            font-size: 18px;
+            line-height: 1;
+            display: block;
+            transform: rotate(0deg);
+          }`,
         `#${IDS.btn}:hover{filter:brightness(.95)}`,
-        `:root[${ATTR}="1"] #${IDS.btn}::after{content:"›"}`,
-        `:root:not([${ATTR}="1"]) #${IDS.btn}::after{content:"‹"}`,
+        `:root[${ATTR}="1"] #${IDS.btn}::after{ content: "›"; }`,
+        `:root:not([${ATTR}="1"]) #${IDS.btn}::after{ content: "‹"; }`,
         `@media (prefers-color-scheme:dark){#${IDS.btn}{background:#1e1f22;color:#e5e5e5;border-color:#2f3033}}`,
         `@media screen and (min-width:64em){:root[${ATTR}="1"] [data-arval-main].large-10{width:100%!important}}`,
         `@media screen and (min-width:40em){:root[${ATTR}="1"] [data-arval-main].medium-9{width:100%!important}}`
