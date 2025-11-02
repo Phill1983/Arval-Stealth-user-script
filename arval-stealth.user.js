@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.1.3
+// @version      4.1.4
 // @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -502,39 +502,52 @@
     function escapeHtml(s) {
       return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
     }
+
    function buildRedsTable(rows) {
   const wrap = ce('table', { className: 'arv-table' });
   wrap.innerHTML = `
     <thead>
       <tr>
-        <th>#</th><th>Sprawa</th><th>Nr rej</th><th>Klient</th>
-        <th>Etap</th><th>Koniec kontraktu</th><th>Link</th>
+        <th>#</th>
+        <th>Sprawa</th>
+        <th>Nr rej</th>
+        <th>Dane auta</th>
+        <th>Etap</th>
+        <th>Koniec kontraktu</th>
+        <th>Link</th>
       </tr>
     </thead>
     <tbody></tbody>
   `;
+
   const tb = $('tbody', wrap);
-    rows.forEach((it, i) => {
-      const tr = ce('tr');
-      const nrSzkody = (it.cells[1] || '');
-      const nrRej    = (it.cells[2] || '');
-      const klient   = (it.cells[3] || '');
-      const etap     = (it.cells[10] || it.cells[11] || '');
-      const linkHtml = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
-      tr.innerHTML = `
-        <td>${i + 1}</td>
-        <td>${escapeHtml(nrSzkody)}</td>
-        <td>${escapeHtml(nrRej)}</td>
-        <td>${escapeHtml(klient)}</td>
-        <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
-        <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13д">${it.date}</td>
-        <td>${linkHtml}</td>
-      `;
-      tb.appendChild(tr);
-    });
+
+  rows.forEach((it, i) => {
+    const tr = ce('tr');
+    const cells = it.cells;
+
+    const nrSzkody = (cells[2] || '');
+    const nrRej    = ''; // Поки що немає — можна додати, якщо буде в інших колонках
+    const daneAuta = (cells[3] || '');
+    const etap     = (cells[4] || '');
+    const linkHtml = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
+
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td>${escapeHtml(nrSzkody)}</td>
+      <td>${escapeHtml(nrRej)}</td>
+      <td>${escapeHtml(daneAuta)}</td>
+      <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
+      <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13д">${it.date}</td>
+      <td>${linkHtml}</td>
+    `;
+    tb.appendChild(tr);
+  });
 
   return wrap;
 }
+
+
 
 
     async function showAllRedsModal() {
