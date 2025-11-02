@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.1.2
+// @version      4.1.3
 // @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -514,24 +514,25 @@
     <tbody></tbody>
   `;
   const tb = $('tbody', wrap);
-  rows.forEach((it, i) => {
-    const tr = ce('tr');
-    const nrSzkody = (it.cells[0] || '');
-    const nrRej    = (it.cells[2] || ''); 
-    const klient   = (it.cells[3] || '');
-    const etap     = (it.cells[10] || it.cells[11] || '');
-    const linkHtml = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
-    tr.innerHTML = `
-      <td>${i + 1}</td>
-      <td>${escapeHtml(nrSzkody)}</td>
-      <td>${escapeHtml(nrRej)}</td>
-      <td>${escapeHtml(klient)}</td>
-      <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
-      <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13д">${it.date}</td>
-      <td>${linkHtml}</td>
-    `;
-    tb.appendChild(tr);
-  });
+    rows.forEach((it, i) => {
+      const tr = ce('tr');
+      const nrSzkody = (it.cells[1] || '');
+      const nrRej    = (it.cells[2] || '');
+      const klient   = (it.cells[3] || '');
+      const etap     = (it.cells[10] || it.cells[11] || '');
+      const linkHtml = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
+      tr.innerHTML = `
+        <td>${i + 1}</td>
+        <td>${escapeHtml(nrSzkody)}</td>
+        <td>${escapeHtml(nrRej)}</td>
+        <td>${escapeHtml(klient)}</td>
+        <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
+        <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13д">${it.date}</td>
+        <td>${linkHtml}</td>
+      `;
+      tb.appendChild(tr);
+    });
+
   return wrap;
 }
 
