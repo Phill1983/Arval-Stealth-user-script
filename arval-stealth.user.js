@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.1.0
+// @version      4.1.1
 // @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -70,24 +70,22 @@
         `:root[${ATTR}="1"] [data-arval-main].columns{float:none!important;display:block!important;width:100%!important;max-width:100%!important;flex:1 1 auto!important}`,
         `:root[${ATTR}="1"] [data-arval-left].columns{float:none!important;}`,
         `#${IDS.btn}{
-            position: absolute;
-            top: 50%;
-            right: -18px;
-            transform: translateY(-50%);
-            width: 30px;
-            height: 30px;
-            border-radius: 15px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font: 600 14px/1 system-ui,Segoe UI,Arial,sans-serif;
-            background: #fff;
-            border: 1px solid rgba(0,0,0,.12);
-            box-shadow: 0 2px 10px rgba(0,0,0,.2);
-            cursor: pointer;
-            user-select: none;
-            z-index: 100;
-          }`,
+        position:fixed;
+        top:50%;
+        left:10px;
+        z-index:2147483647;
+        width:30px;
+        height:30px;
+        border-radius:15px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font:600 14px/1 system-ui,Segoe UI,Arial,sans-serif;
+        background:#fff;
+        border:1px solid rgba(0,0,0,.12);
+        box-shadow:0 2px 10px rgba(0,0,0,.2);
+        cursor:pointer;
+        user-select:none}`,
 
         `#${IDS.btn}:hover{filter:brightness(.95)}`,
         `:root[${ATTR}="1"] #${IDS.btn}::after{content:"›"}`,
@@ -120,13 +118,11 @@
       if ($('#' + IDS.btn)) return;
       const initial = load() === '1';
       const b = ce('button', {
-        id: IDS.btn, title: 'Zamknąć/otworzyć menu', 'aria-label': 'Toggle sidebar',
+        id: IDS.btn, title: 'Згорнути/розгорнути меню', 'aria-label': 'Toggle sidebar',
         'aria-pressed': initial ? 'true' : 'false'
       });
       b.addEventListener('click', () => { const v = docEl.getAttribute(ATTR) === '1' ? '0' : '1'; apply(v); });
-      const sidebar = $('[data-arval-left]');
-        if (sidebar) sidebar.appendChild(b);
-        else docEl.appendChild(b); // fallback
+      docEl.appendChild(b);
     }
 
     function save(v){ try { localStorage.setItem(LSK, v); } catch {} }
