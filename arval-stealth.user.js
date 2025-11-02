@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.0.9
+// @version      4.1.0
 // @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -70,33 +70,28 @@
         `:root[${ATTR}="1"] [data-arval-main].columns{float:none!important;display:block!important;width:100%!important;max-width:100%!important;flex:1 1 auto!important}`,
         `:root[${ATTR}="1"] [data-arval-left].columns{float:none!important;}`,
         `#${IDS.btn}{
-            position: fixed;
-            top: 0;
-            left: 0;
-            height: 100vh;
-            width: 24px;
-            z-index: 2147483647;
-            border: none;
-            background: #fff;
+            position: absolute;
+            top: 50%;
+            right: -18px;
+            transform: translateY(-50%);
+            width: 30px;
+            height: 30px;
+            border-radius: 15px;
             display: flex;
             align-items: center;
             justify-content: center;
+            font: 600 14px/1 system-ui,Segoe UI,Arial,sans-serif;
+            background: #fff;
+            border: 1px solid rgba(0,0,0,.12);
+            box-shadow: 0 2px 10px rgba(0,0,0,.2);
             cursor: pointer;
             user-select: none;
-            padding: 0;
-            border-right: 1px solid rgba(0,0,0,0.1);
+            z-index: 100;
           }`,
 
-          `#${IDS.btn}::after{
-            content: "";
-            font-size: 18px;
-            line-height: 1;
-            display: block;
-            transform: rotate(0deg);
-          }`,
         `#${IDS.btn}:hover{filter:brightness(.95)}`,
-        `:root[${ATTR}="1"] #${IDS.btn}::after{ content: "›"; }`,
-        `:root:not([${ATTR}="1"]) #${IDS.btn}::after{ content: "‹"; }`,
+        `:root[${ATTR}="1"] #${IDS.btn}::after{content:"›"}`,
+        `:root:not([${ATTR}="1"]) #${IDS.btn}::after{content:"‹"}`,
         `@media (prefers-color-scheme:dark){#${IDS.btn}{background:#1e1f22;color:#e5e5e5;border-color:#2f3033}}`,
         `@media screen and (min-width:64em){:root[${ATTR}="1"] [data-arval-main].large-10{width:100%!important}}`,
         `@media screen and (min-width:40em){:root[${ATTR}="1"] [data-arval-main].medium-9{width:100%!important}}`
@@ -125,11 +120,13 @@
       if ($('#' + IDS.btn)) return;
       const initial = load() === '1';
       const b = ce('button', {
-        id: IDS.btn, title: 'Згорнути/розгорнути меню', 'aria-label': 'Toggle sidebar',
+        id: IDS.btn, title: 'Zamknąć/otworzyć menu', 'aria-label': 'Toggle sidebar',
         'aria-pressed': initial ? 'true' : 'false'
       });
       b.addEventListener('click', () => { const v = docEl.getAttribute(ATTR) === '1' ? '0' : '1'; apply(v); });
-      docEl.appendChild(b);
+      const sidebar = $('[data-arval-left]');
+        if (sidebar) sidebar.appendChild(b);
+        else docEl.appendChild(b); // fallback
     }
 
     function save(v){ try { localStorage.setItem(LSK, v); } catch {} }
