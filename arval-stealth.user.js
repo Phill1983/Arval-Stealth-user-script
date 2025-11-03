@@ -134,7 +134,7 @@
       save(val);
     }
 
-    // SPA-підтримка
+    // SPA-FRIENDLY
     let armed = false, lastUrl = location.href, rescanTO = null;
 
     function initOnce() {
@@ -204,7 +204,7 @@
         .arv-date--red    { color: #b50000; font-weight: 700; }
         .arv-overdue { text-decoration: underline dotted; text-underline-offset: 2px; }
         .arv-overdue-icon { cursor: help; }
-        .arv-toolbar { display:flex; align-items:center; gap:10px; margin:10px 0 6px; }
+        .arv-toolbar { display:flex; align-items:center; gap:10px; margin:10px 0 10px; }
         .arv-btn { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:4px; border:1px solid #c9c9c9; background:#f5f5f5; cursor:pointer; user-select:none; }
         .arv-btn:hover { background:#016f46; }
         .arv-btn--primary { background:#00965E; color:#fff; border-color:#016f46; }
@@ -216,6 +216,10 @@
         .arv-modal__panel { margin:auto; width:min(1200px, 96vw); max-height:90vh; background:#fff; border-radius:6px; box-shadow:0 10px 30px rgba(0,0,0,.25); display:flex; flex-direction:column; }
         .arv-modal__head { padding:12px 16px; border-bottom:1px solid #e5e5e5; display:flex; align-items:center; gap:12px; }
         .arv-modal__body { padding:12px 16px; overflow:auto; }
+        :root.arv-modal-open { overflow: hidden; }              /* блокуємо скрол сторінки */
+        .arv-modal { overscroll-behavior: none; }               /* без прокидання скролу на фон */
+        .arv-modal__body { overflow: auto; overscroll-behavior: contain; } /* скролимо лише контент модалки */
+
         .arv-table { width:100%; border-collapse:collapse; }
         .arv-table th, .arv-table td { border-bottom:1px solid #eee; padding:6px 8px; white-space:nowrap; }
         .arv-badge { font-size:12px; padding:2px 6px; border-radius:10px; background:#eee; }
@@ -323,41 +327,98 @@
       table.parentNode.insertBefore(bar, table);
     }
 
-    function getPaginationUrls() {
-      const links = new Set();
-      $$('a[href*="/claims/insurancecase"]').forEach(a => {
-        const href = a.getAttribute('href') || '';
-        if (/\/index\/page\/\d+/.test(href)) {
-          const abs = toAbsUrl(href);
-          if (abs) links.add(abs);
-        }
-      });
-      links.add(location.href);
-      return Array.from(links);
+ function getPaginationUrls() {
+  const links = new Set();
+
+  // зібрати всі лінки пагінації
+  $$('a[href*="/claims/insurancecase"]').forEach(a => {
+    const href = a.getAttribute('href') || '';
+    if (/\/index\/page\/\d+/.test(href)) {
+      const abs = toAbsUrl(href);
+      if (abs) links.add(abs);
+    }
+  });
+
+  // 🔹 додаємо поточну сторінку
+  links.add(location.href);
+
+  // 🧹 очищаємо від дублікатів за номером сторінки
+  const cleaned = new Map();
+  for (const link of links) {
+    const m = link.match(/\/page\/(\d+)/);
+    const pageNum = m ? m[1] : '1';
+    cleaned.set(pageNum, link);
+  }
+
+  return Array.from(cleaned.values()).sort((a, b) => {
+    const pa = +(a.match(/\/page\/(\d+)/)?.[1] || 1);
+    const pb = +(b.match(/\/page\/(\d+)/)?.[1] || 1);
+    return pa - pb;
+  });
+}
+
+
+async function fetchListPage(url) {
+  const abs = toAbsUrl(url);
+  if (!abs) return [];
+
+  const res = await fetch(abs, {
+    credentials: 'include',
+    cache: 'no-store',
+    mode: 'same-origin',
+    headers: { Accept: 'text/html' }
+  });
+
+  if (!res.ok) return [];
+
+  const html = await res.text();
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(html, 'text/html');
+  } catch {
+    return [];
+  }
+
+  const table = findListTableInDoc(doc);
+  if (!table) return [];
+
+  const rows = Array.from(table.querySelectorAll('tbody tr')).filter(tr => tr.querySelector('td'));
+
+  // 🧹 Створюємо унікальний список рядків
+  const seen = new Set();
+  const uniqueRows = [];
+
+  for (const tr of rows) {
+    const cells = Array.from(tr.querySelectorAll('td')).map(td => (td.textContent || '').trim());
+    const linkEl = tr.querySelector('a[href*="/claims/insurancecase"]');
+    const href = linkEl ? toAbsUrl(linkEl.getAttribute('href')) : null;
+
+    // Витягуємо унікальний ID справи
+    let id = null;
+    if (href) {
+      const m1 = href.match(/\/id\/(\d+)/);
+      const m2 = href.match(/[?&]id=(\d+)/);
+      const m3 = href.match(/\/(\d+)(?:[#/?]|$)/);
+      if (m1) id = m1[1];
+      else if (m2) id = m2[1];
+      else if (m3) id = m3[1];
     }
 
-    async function fetchListPage(url) {
-      const abs = toAbsUrl(url); if (!abs) return [];
-      const res = await fetch(abs, { credentials:'include', cache:'no-store', mode:'same-origin', headers:{ Accept:'text/html' } });
-      if (!res.ok) return [];
-      const html = await res.text();
-      let doc; try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch { return []; }
-      const table = findListTableInDoc(doc); if (!table) return [];
-      const rows = Array.from(table.querySelectorAll('tbody tr')).filter(tr => tr.querySelector('td'));
-      return rows.map(tr => {
-        const cells = Array.from(tr.querySelectorAll('td')).map(td => (td.textContent || '').trim());
-        const linkEl = tr.querySelector('a[href*="/claims/insurancecase"]');
-        const href = linkEl ? toAbsUrl(linkEl.getAttribute('href')) : null;
-        let id = null;
-        if (href) {
-          const m1 = href.match(/\/id\/(\d+)/);
-          const m2 = href.match(/[?&]id=(\d+)/);
-          const m3 = href.match(/\/(\d+)(?:[#/?]|$)/);
-          if (m1) id = m1[1]; else if (m2) id = m2[1]; else if (m3) id = m3[1];
-        }
-        return { id, href, cells };
-      });
+    // 🔑 Унікальний ключ для фільтрації дублікатів
+    const key = id || href || JSON.stringify(cells);
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueRows.push({ id, href, cells });
     }
+  }
+
+
+  console.log(`✅ ${abs} → знайдено: ${rows.length}, унікальних: ${uniqueRows.length}`);
+
+  return uniqueRows;
+}
+
 
     const LS_KEY = 'arval_contract_end_cache_v2';
     const cache = (function loadCache() {
@@ -486,24 +547,92 @@
       return date;
     }
 
-    async function gatherAllRedCases() {
-      const urls = getPaginationUrls();
-      const out = [];
-      for (const url of urls) {
-        const items = await fetchListPage(url);
-        for (const it of items) {
-          const date = await ensureDateForCase(it);
-          if (isDateRed(date)) out.push({ ...it, date });
-        }
-      }
-      return out;
-    }
+// === [ НОВА ВЕРСІЯ ] =======================================================
 
-    function escapeHtml(s) {
-      return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-    }
+async function gatherAllRedCases() {
+  // 🧹 Скидаємо старі кеші, щоб уникнути конфліктів між версіями
+  try { localStorage.removeItem('arval_contract_end_cache_v1'); } catch {}
+  try { localStorage.removeItem('arval_contract_end_cache_v2'); } catch {}
 
-   function buildRedsTable(rows) {
+  const urls = getPaginationUrls();
+  const out = [];
+  const seen = new Set();
+
+  for (const url of urls) {
+    const items = await fetchListPage(url);
+    for (const it of items) {
+      if (!it.id) continue; // без id пропускаємо
+      if (seen.has(it.id)) continue; // дубль
+      seen.add(it.id);
+
+      const date = await ensureDateForCase(it);
+      if (!date) continue; // без дати нічого не беремо
+      if (isDateRed(date)) out.push({ ...it, date });
+    }
+  }
+
+  // Сортуємо по даті (старші зверху)
+  out.sort((a, b) => (a.date > b.date ? 1 : -1));
+  return out;
+}
+
+
+async function showAllRedsModal() {
+  const modal = ce('div', { className:'arv-modal' });
+  modal.innerHTML = `
+    <div class="arv-modal__panel">
+      <div class="arv-modal__head">
+        <strong>Czerwone kontrakty — ze wszystkich stron</strong>
+        <span class="arv-muted" id="arv-progress">Zbieram...</span>
+        <div style="margin-left:auto"></div>
+        <button class="arv-btn" id="arv-close">Zamknąć</button>
+      </div>
+      <div class="arv-modal__body" id="arv-body"></div>
+    </div>
+  `;
+  d.body.appendChild(modal);
+  document.documentElement.classList.add('arv-modal-open');
+
+  $('#arv-close', modal).addEventListener('click', () => {
+    modal.remove();
+    document.documentElement.classList.remove('arv-modal-open');
+  });
+
+  const progress = $('#arv-progress', modal);
+  const body = $('#arv-body', modal);
+
+  progress.textContent = 'Zbieram dane...';
+  const reds = await gatherAllRedCases();
+
+  // 🚫 Фільтруємо всі, де рядок містить "zlecenie zamknięte"
+  const filtered = reds.filter(it => {
+    const text = (it.cells || []).join(' ').toLowerCase();
+    return !text.includes('zlecenie zamknięte');
+  });
+
+  progress.textContent = `Znaleziono: ${filtered.length}`;
+
+  if (!filtered.length) {
+    body.innerHTML = '<div class="arv-muted">Brak "czerwonych" dat na dostępnych stronach.</div>';
+    return;
+  }
+
+  body.appendChild(buildRedsTable(filtered));
+
+  // блокування прокрутки сайту при відкритій модалці
+  const stopBgScroll = (e) => { if (e.target === modal) e.preventDefault(); };
+  modal.addEventListener('wheel', stopBgScroll, { passive: false });
+  modal.addEventListener('touchmove', stopBgScroll, { passive: false });
+}
+
+
+
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/[&<>"']/g, m => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[m]));
+}
+
+function buildRedsTable(rows) {
   const wrap = ce('table', { className: 'arv-table' });
   wrap.innerHTML = `
     <thead>
@@ -511,8 +640,9 @@
         <th>#</th>
         <th>Sprawa</th>
         <th>Nr rej</th>
-        <th>Dane auta</th>
+        <th>Klient</th>
         <th>Etap</th>
+        <th>Pracownik warsztatu</th>
         <th>Koniec kontraktu</th>
         <th>Link</th>
       </tr>
@@ -522,26 +652,40 @@
 
   const tb = $('tbody', wrap);
 
+  const shorten = (text, maxLen = 30) => {
+    if (!text) return '';
+    text = text.trim();
+    return text.length > maxLen ? text.slice(0, maxLen) + '…' : text;
+  };
+
   rows.forEach((it, i) => {
-    const tr = ce('tr');
-    const cells = it.cells;
+    try {
+      const tr = ce('tr');
+      const cells = it.cells || [];
 
-    const nrSzkody = (cells[2] || '');
-    const nrRej    = ''; // Поки що немає — можна додати, якщо буде в інших колонках
-    const daneAuta = (cells[3] || '');
-    const etap     = (cells[4] || '');
-    const linkHtml = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
+      const nrSzkody  = shorten(cells[2] || cells[1] || '');
+      const nrRej     = shorten(cells[3] || '');
+      const klient    = shorten(cells[4] || cells[5] || '');
+      const etap      = shorten(cells[11] || cells[10] || cells[9] || '');
+      const pracownik = shorten(cells[15] || cells[14] || cells[cells.length - 3] || '');
 
-    tr.innerHTML = `
-      <td>${i + 1}</td>
-      <td>${escapeHtml(nrSzkody)}</td>
-      <td>${escapeHtml(nrRej)}</td>
-      <td>${escapeHtml(daneAuta)}</td>
-      <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
-      <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13д">${it.date}</td>
-      <td>${linkHtml}</td>
-    `;
-    tb.appendChild(tr);
+      const linkHtml  = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
+
+      tr.innerHTML = `
+        <td>${i + 1}</td>
+        <td>${escapeHtml(nrSzkody)}</td>
+        <td title="${escapeHtml(cells[3] || '')}">${escapeHtml(nrRej)}</td>
+        <td title="${escapeHtml(cells[4] || '')}">${escapeHtml(klient)}</td>
+        <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
+        <td>${escapeHtml(pracownik)}</td>
+        <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13 dni">${it.date}</td>
+        <td>${linkHtml}</td>
+      `;
+
+      tb.appendChild(tr);
+    } catch (err) {
+      console.warn('⚠️ buildRedsTable error for row:', it, err);
+    }
   });
 
   return wrap;
@@ -550,33 +694,53 @@
 
 
 
+
+
+
+
     async function showAllRedsModal() {
-      const modal = ce('div', { className:'arv-modal' });
-      modal.innerHTML = `
-        <div class="arv-modal__panel">
-          <div class="arv-modal__head">
-            <strong>Czerwone kontrakty — ze wszystkich stron</strong>
-            <span class="arv-muted" id="arv-progress">Zbieram... Przyszłły Loader</span>
-            <div style="margin-left:auto"></div>
-            <button class="arv-btn" id="arv-close">Zamknąć</button>
-          </div>
-          <div class="arv-modal__body" id="arv-body"></div>
-        </div>
-      `;
+  const modal = ce('div', { className:'arv-modal' });
+  modal.innerHTML = `
+    <div class="arv-modal__panel">
+      <div class="arv-modal__head">
+        <strong>Czerwone kontrakty — ze wszystkich stron</strong>
+        <span class="arv-muted" id="arv-progress">Zbieram... Przyszłły Loader</span>
+        <div style="margin-left:auto"></div>
+        <button class="arv-btn" id="arv-close">Zamknąć</button>
+      </div>
+      <div class="arv-modal__body" id="arv-body"></div>
+    </div>
+  `;
       d.body.appendChild(modal);
-      $('#arv-close', modal).addEventListener('click', () => modal.remove());
+      document.documentElement.classList.add('arv-modal-open');
 
-      const reds = await gatherAllRedCases();
-      const body = $('#arv-body', modal);
-      const progress = $('#arv-progress', modal);
-      progress.textContent = `Znaleziono: ${reds.length}`;
+  $('#arv-close', modal).addEventListener('click', () => {
+  modal.remove();
+  document.documentElement.classList.remove('arv-modal-open');
+});
 
-      if (!reds.length) {
-        body.innerHTML = '<div class="arv-muted">Brak "czerwonych" dat na dostępbych stronach.</div>';
-        return;
-      }
-      body.appendChild(buildRedsTable(reds));
-    }
+
+  const reds = await gatherAllRedCases();
+  const body = $('#arv-body', modal);
+  const progress = $('#arv-progress', modal);
+
+  //Filtrujemy zamknięte zlecenia
+  const filtered = reds.filter(it => {
+    const cells = it.cells || [];
+    const etap = (cells[5] || '').toLowerCase().trim();
+    return !etap.includes('zlecenie zamknięte');
+  });
+
+  progress.textContent = `Znaleziono: ${filtered.length}`;
+
+  if (!filtered.length) {
+    body.innerHTML = '<div class="arv-muted">Brak "czerwonych" dat na dostępbych stronach.</div>';
+    return;
+  }
+
+  body.appendChild(buildRedsTable(filtered));
+}
+
 
     function ensureHeaderAndCells(table) {
       ensureHeader(table);
