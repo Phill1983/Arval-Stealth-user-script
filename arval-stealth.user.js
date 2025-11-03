@@ -1,20 +1,17 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
-// @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.1.4
-// @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
-// @author       Phill_Mass
+// @namespace    phil.arval.safe
+// @version      4.0.1
+// @description  ...
 // @match        https://serwisarval.pl/claims/insurancecase*
 // @connect      serwisarval.pl
 // @run-at       document-start
 // @grant        none
-// @homepageURL  https://github.com/Phill1983/Arval-Stealth-user-script
-// @supportURL   https://github.com/Phill1983/Arval-Stealth-user-script/issues
+// @homepageURL  https://github.com/<owner>/<repo>
+// @supportURL   https://github.com/<owner>/<repo>/issues
 // @downloadURL  https://raw.githubusercontent.com/Phill1983/Arval-Stealth-user-script/main/arval-stealth.user.js
-// @updateURL    https://raw.githubusercontent.com/Phill1983/Arval-Stealth-user-script/main/arval-stealth.user.js
+// @updateURL    https://raw.githubusercontent.com/Phill1983/Arval-Stealth-user-script/main/arval-stealth.meta.js
 // ==/UserScript==
-
-
 
 (function () {
   'use strict';
@@ -26,7 +23,7 @@
     enableMenuHide: true,
     enableDateCol:  true,
     debounceMs: 150,
-    // Zakresy do kolorów
+    // Пороги кольорів
     thresholds: { green: 30, yellow: 14 }, // ≥30 зелений, 14–29 жовтий, ≤13 червоний
   };
 
@@ -69,24 +66,7 @@
         `:root[${ATTR}="1"] [data-arval-left]{transform:translateX(-100%);width:0!important;min-width:0!important;overflow:hidden!important;position:absolute!important;left:0;top:0;height:0!important;pointer-events:none!important;visibility:hidden!important}`,
         `:root[${ATTR}="1"] [data-arval-main].columns{float:none!important;display:block!important;width:100%!important;max-width:100%!important;flex:1 1 auto!important}`,
         `:root[${ATTR}="1"] [data-arval-left].columns{float:none!important;}`,
-        `#${IDS.btn}{
-        position:fixed;
-        top:50%;
-        left:10px;
-        z-index:999;
-        width:30px;
-        height:30px;
-        border-radius:15px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font:600 14px/1 system-ui,Segoe UI,Arial,sans-serif;
-        background:#fff;
-        border:1px solid rgba(0,0,0,.12);
-        box-shadow:0 2px 10px rgba(0,0,0,.2);
-        cursor:pointer;
-        user-select:none}`,
-
+        `#${IDS.btn}{position:fixed;top:84px;left:10px;z-index:2147483647;width:30px;height:30px;border-radius:15px;display:flex;align-items:center;justify-content:center;font:600 14px/1 system-ui,Segoe UI,Arial,sans-serif;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 2px 10px rgba(0,0,0,.2);cursor:pointer;user-select:none}`,
         `#${IDS.btn}:hover{filter:brightness(.95)}`,
         `:root[${ATTR}="1"] #${IDS.btn}::after{content:"›"}`,
         `:root:not([${ATTR}="1"]) #${IDS.btn}::after{content:"‹"}`,
@@ -502,53 +482,38 @@
     function escapeHtml(s) {
       return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
     }
-
-   function buildRedsTable(rows) {
-  const wrap = ce('table', { className: 'arv-table' });
-  wrap.innerHTML = `
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Sprawa</th>
-        <th>Nr rej</th>
-        <th>Dane auta</th>
-        <th>Etap</th>
-        <th>Koniec kontraktu</th>
-        <th>Link</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  `;
-
-  const tb = $('tbody', wrap);
-
-  rows.forEach((it, i) => {
-    const tr = ce('tr');
-    const cells = it.cells;
-
-    const nrSzkody = (cells[2] || '');
-    const nrRej    = ''; // Поки що немає — можна додати, якщо буде в інших колонках
-    const daneAuta = (cells[3] || '');
-    const etap     = (cells[4] || '');
-    const linkHtml = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
-
-    tr.innerHTML = `
-      <td>${i + 1}</td>
-      <td>${escapeHtml(nrSzkody)}</td>
-      <td>${escapeHtml(nrRej)}</td>
-      <td>${escapeHtml(daneAuta)}</td>
-      <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
-      <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13д">${it.date}</td>
-      <td>${linkHtml}</td>
-    `;
-    tb.appendChild(tr);
-  });
-
-  return wrap;
-}
-
-
-
+    function buildRedsTable(rows) {
+      const wrap = ce('table', { className:'arv-table' });
+      wrap.innerHTML = `
+        <thead>
+          <tr>
+            <th>#</th><th>Sprawa</th><th>Nr rej</th><th>Klient</th>
+            <th>Etap</th><th>Koniec kontraktu</th><th>Link</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      `;
+      const tb = $('tbody', wrap);
+      rows.forEach((it, i) => {
+        const tr = ce('tr');
+        const nrSzkody = (it.cells[0] || '');
+        const nrRej    = (it.cells[1] || '');
+        const klient   = (it.cells[3] || '');
+        const etap     = (it.cells[10] || it.cells[11] || '');
+        const linkHtml = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
+        tr.innerHTML = `
+          <td>${i+1}</td>
+          <td>${escapeHtml(nrSzkody)}</td>
+          <td>${escapeHtml(nrRej)}</td>
+          <td>${escapeHtml(klient)}</td>
+          <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
+          <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13д">${it.date}</td>
+          <td>${linkHtml}</td>
+        `;
+        tb.appendChild(tr);
+      });
+      return wrap;
+    }
 
     async function showAllRedsModal() {
       const modal = ce('div', { className:'arv-modal' });
