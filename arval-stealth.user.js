@@ -1,17 +1,20 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
-// @namespace    phil.arval.safe
-// @version      4.0.1
-// @description  ...
+// @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
+// @version      4.1.4
+// @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
+// @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
 // @connect      serwisarval.pl
 // @run-at       document-start
 // @grant        none
-// @homepageURL  https://github.com/<owner>/<repo>
-// @supportURL   https://github.com/<owner>/<repo>/issues
+// @homepageURL  https://github.com/Phill1983/Arval-Stealth-user-script
+// @supportURL   https://github.com/Phill1983/Arval-Stealth-user-script/issues
 // @downloadURL  https://raw.githubusercontent.com/Phill1983/Arval-Stealth-user-script/main/arval-stealth.user.js
-// @updateURL    https://raw.githubusercontent.com/Phill1983/Arval-Stealth-user-script/main/arval-stealth.meta.js
+// @updateURL    https://raw.githubusercontent.com/Phill1983/Arval-Stealth-user-script/main/arval-stealth.user.js
 // ==/UserScript==
+
+
 
 (function () {
   'use strict';
@@ -23,7 +26,7 @@
     enableMenuHide: true,
     enableDateCol:  true,
     debounceMs: 150,
-    // Пороги кольорів
+    // Zakresy do kolorów
     thresholds: { green: 30, yellow: 14 }, // ≥30 зелений, 14–29 жовтий, ≤13 червоний
   };
 
@@ -66,7 +69,24 @@
         `:root[${ATTR}="1"] [data-arval-left]{transform:translateX(-100%);width:0!important;min-width:0!important;overflow:hidden!important;position:absolute!important;left:0;top:0;height:0!important;pointer-events:none!important;visibility:hidden!important}`,
         `:root[${ATTR}="1"] [data-arval-main].columns{float:none!important;display:block!important;width:100%!important;max-width:100%!important;flex:1 1 auto!important}`,
         `:root[${ATTR}="1"] [data-arval-left].columns{float:none!important;}`,
-        `#${IDS.btn}{position:fixed;top:84px;left:10px;z-index:2147483647;width:30px;height:30px;border-radius:15px;display:flex;align-items:center;justify-content:center;font:600 14px/1 system-ui,Segoe UI,Arial,sans-serif;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 2px 10px rgba(0,0,0,.2);cursor:pointer;user-select:none}`,
+        `#${IDS.btn}{
+        position:fixed;
+        top:50%;
+        left:10px;
+        z-index:999;
+        width:30px;
+        height:30px;
+        border-radius:15px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font:600 14px/1 system-ui,Segoe UI,Arial,sans-serif;
+        background:#fff;
+        border:1px solid rgba(0,0,0,.12);
+        box-shadow:0 2px 10px rgba(0,0,0,.2);
+        cursor:pointer;
+        user-select:none}`,
+
         `#${IDS.btn}:hover{filter:brightness(.95)}`,
         `:root[${ATTR}="1"] #${IDS.btn}::after{content:"›"}`,
         `:root:not([${ATTR}="1"]) #${IDS.btn}::after{content:"‹"}`,
@@ -98,7 +118,7 @@
       if ($('#' + IDS.btn)) return;
       const initial = load() === '1';
       const b = ce('button', {
-        id: IDS.btn, title: 'Згорнути/розгорнути меню', 'aria-label': 'Toggle sidebar',
+        id: IDS.btn, title: 'Zchować/Pokazać menu', 'aria-label': 'Toggle sidebar',
         'aria-pressed': initial ? 'true' : 'false'
       });
       b.addEventListener('click', () => { const v = docEl.getAttribute(ATTR) === '1' ? '0' : '1'; apply(v); });
@@ -179,18 +199,18 @@
       if ($('#arval-date-styles')) return;
       const style = ce('style', { id: 'arval-date-styles' });
       style.textContent = `
-        .arv-date--green  { color: #0a7d22; font-weight: 600; }
+        .arv-date--green  { color: #00965E; font-weight: 600; }
         .arv-date--yellow { color: #9b7d00; font-weight: 600; }
         .arv-date--red    { color: #b50000; font-weight: 700; }
         .arv-overdue { text-decoration: underline dotted; text-underline-offset: 2px; }
         .arv-overdue-icon { cursor: help; }
         .arv-toolbar { display:flex; align-items:center; gap:10px; margin:10px 0 6px; }
         .arv-btn { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:4px; border:1px solid #c9c9c9; background:#f5f5f5; cursor:pointer; user-select:none; }
-        .arv-btn:hover { background:#ededed; }
-        .arv-btn--primary { background:#2e7d32; color:#fff; border-color:#2e7d32; }
+        .arv-btn:hover { background:#016f46; }
+        .arv-btn--primary { background:#00965E; color:#fff; border-color:#016f46; }
         .arv-btn--primary:hover { filter:brightness(0.95); }
         .arv-btn--ghost { background:transparent; }
-        .arv-btn--active { outline:2px solid #2e7d32; }
+        .arv-btn--active { outline:2px solid #00965E; }
         .arv-muted { opacity:.75; font-size:12px; }
         .arv-modal { position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:9999; display:flex; }
         .arv-modal__panel { margin:auto; width:min(1200px, 96vw); max-height:90vh; background:#fff; border-radius:6px; box-shadow:0 10px 30px rgba(0,0,0,.25); display:flex; flex-direction:column; }
@@ -482,38 +502,53 @@
     function escapeHtml(s) {
       return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
     }
-    function buildRedsTable(rows) {
-      const wrap = ce('table', { className:'arv-table' });
-      wrap.innerHTML = `
-        <thead>
-          <tr>
-            <th>#</th><th>Sprawa</th><th>Nr rej</th><th>Klient</th>
-            <th>Etap</th><th>Koniec kontraktu</th><th>Link</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      `;
-      const tb = $('tbody', wrap);
-      rows.forEach((it, i) => {
-        const tr = ce('tr');
-        const nrSzkody = (it.cells[0] || '');
-        const nrRej    = (it.cells[1] || '');
-        const klient   = (it.cells[3] || '');
-        const etap     = (it.cells[10] || it.cells[11] || '');
-        const linkHtml = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
-        tr.innerHTML = `
-          <td>${i+1}</td>
-          <td>${escapeHtml(nrSzkody)}</td>
-          <td>${escapeHtml(nrRej)}</td>
-          <td>${escapeHtml(klient)}</td>
-          <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
-          <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13д">${it.date}</td>
-          <td>${linkHtml}</td>
-        `;
-        tb.appendChild(tr);
-      });
-      return wrap;
-    }
+
+   function buildRedsTable(rows) {
+  const wrap = ce('table', { className: 'arv-table' });
+  wrap.innerHTML = `
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Sprawa</th>
+        <th>Nr rej</th>
+        <th>Dane auta</th>
+        <th>Etap</th>
+        <th>Koniec kontraktu</th>
+        <th>Link</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `;
+
+  const tb = $('tbody', wrap);
+
+  rows.forEach((it, i) => {
+    const tr = ce('tr');
+    const cells = it.cells;
+
+    const nrSzkody = (cells[2] || '');
+    const nrRej    = ''; // Поки що немає — можна додати, якщо буде в інших колонках
+    const daneAuta = (cells[3] || '');
+    const etap     = (cells[4] || '');
+    const linkHtml = it.href ? `<a href="${it.href}" target="_blank">Otwórz</a>` : '-';
+
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td>${escapeHtml(nrSzkody)}</td>
+      <td>${escapeHtml(nrRej)}</td>
+      <td>${escapeHtml(daneAuta)}</td>
+      <td><span class="arv-badge">${escapeHtml(etap)}</span></td>
+      <td class="arv-date--red" title="Kontrakt jest przeterminowany/≤13д">${it.date}</td>
+      <td>${linkHtml}</td>
+    `;
+    tb.appendChild(tr);
+  });
+
+  return wrap;
+}
+
+
+
 
     async function showAllRedsModal() {
       const modal = ce('div', { className:'arv-modal' });
