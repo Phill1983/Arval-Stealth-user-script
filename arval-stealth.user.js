@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.1.8
+// @version      4.1.9
 // @description  Automatyzacja roboty z Arval
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -61,51 +61,79 @@ function showBNPLoader(container) {
 
   const style = document.createElement('style');
   style.id = 'bnp-loader-style';
-  style.textContent = `
-    #bnp-loader {
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      padding:40px 0;
+style.textContent = `
+  #bnp-loader {
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:40px 0;
+  }
+
+  .bnp-square {
+    position:relative;
+    width:120px;
+    height:120px;
+    border-radius:16px;
+    overflow:hidden;
+    background:linear-gradient(180deg,#01d284 30%,#00854b 100%);
+  }
+
+  /* ✨ Зірочки (пташки) */
+  .bird {
+    position:absolute;
+    width:24px;
+    height:14px;
+    background:#fff;
+    clip-path:polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+    opacity:0;
+    /* 🌀 Траєкторія як у логотипі — з правого низу через лівий низ до правого верху */
+    offset-path: path("M 105 90 C 0 120, -5 45, 100 15");
+    offset-rotate: 0deg;
+    animation: bnp-fly 3.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+    filter: drop-shadow(0 0 2px #fff8) drop-shadow(0 0 4px #fff5);
+  }
+
+  .bird:nth-child(2){animation-delay:.4s}
+  .bird:nth-child(3){animation-delay:.8s}
+  .bird:nth-child(4){animation-delay:1.2s}
+
+@keyframes bnp-fly {
+  0% {
+    offset-distance: 0%;
+    transform: scale(0.6) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+    transform: scale(0.8) rotate(90deg);
+  }
+  40% {
+    transform: scale(1.2) rotate(180deg);
+    opacity: 1;
+  }
+  70% {
+    transform: scale(1.6) rotate(270deg);
+    opacity: 0.9;
+  }
+  100% {
+    offset-distance: 100%;
+    transform: scale(2.0) rotate(360deg); /* 🔸 максимальне збільшення */
+    opacity: 0;
+  }
+}
+
+  /* fallback */
+  @supports not (offset-path:path("M0,0 L10,10")) {
+    .bird { animation:bnp-fly-fallback 3.2s linear infinite; }
+    @keyframes bnp-fly-fallback {
+      0%   { transform:translate(0,0) scale(.5) rotate(0deg);  opacity:0 }
+      50%  { transform:translate(-60px,-20px) scale(1.1) rotate(25deg); opacity:1 }
+      100% { transform:translate(40px,-90px) scale(1.7) rotate(45deg); opacity:0 }
     }
-    .bnp-square {
-      position:relative;
-      width:120px;
-      height:120px;
-      border-radius:16px;
-      overflow:hidden;
-      background:linear-gradient(180deg,#e7f3ea 0%,#00854b 100%);
-      box-shadow:0 8px 28px rgba(0,0,0,.25);
-    }
-    .bird {
-      position:absolute;
-      width:12px;
-      height:12px;
-      background:#fff;
-      clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);
-      opacity:0;
-      offset-path:path("M 110 110 C 20 90, 10 60, 100 10");
-      offset-rotate:0deg;
-      animation:bnp-fly 2.8s linear infinite;
-    }
-    .bird:nth-child(2){animation-delay:.45s}
-    .bird:nth-child(3){animation-delay:.9s}
-    .bird:nth-child(4){animation-delay:1.35s}
-    @keyframes bnp-fly {
-      0%{offset-distance:0%;transform:scale(.55);opacity:0}
-      10%{opacity:1}
-      55%{offset-distance:55%;transform:scale(1.1);opacity:1}
-      85%{transform:scale(1.4);opacity:.8}
-      100%{offset-distance:100%;transform:scale(1.6);opacity:0}
-    }
-    @supports not (offset-path:path("M0,0 L10,10")) {
-      .bird{animation:bnp-fly-fallback 2.8s linear infinite}
-      @keyframes bnp-fly-fallback{
-        0%{transform:translate(0,0) scale(.55);opacity:0}
-        50%{transform:translate(-60px,-40px) scale(1.1);opacity:1}
-        100%{transform:translate(40px,-100px) scale(1.6);opacity:0}
-      }
-    }`;
+  }
+`;
+
+
   document.head.appendChild(style);
   container.innerHTML = '';
   container.appendChild(wrap);
