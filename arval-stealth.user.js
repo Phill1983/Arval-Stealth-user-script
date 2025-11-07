@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.1.6
-// @description  Автоматизація роботи з Service Flow (Arval) — приховування меню, дати контрактів тощо
+// @version      4.1.7
+// @description  Automatyzacja roboty z Arval
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
 // @connect      serwisarval.pl
@@ -27,7 +27,7 @@
     enableDateCol:  true,
     debounceMs: 150,
     // Zakresy do kolorów
-    thresholds: { green: 30, yellow: 14 }, // ≥30 зелений, 14–29 жовтий, ≤13 червоний
+    thresholds: { green: 30, yellow: 14 }, // ≥30 zielony, 14–29 żółty, ≤13 czerwony
   };
 
   /***************************************************************************
@@ -44,6 +44,83 @@
     try { return new URL(href, location.href).href; } catch {}
     try { const a = ce('a', { href }); return a.href || null; } catch { return null; }
   };
+
+  // ==== BNP Paribas Loader (arc animation) ===================================
+function showBNPLoader() {
+  if (document.getElementById('bnp-loader')) return;
+
+  const wrap = document.createElement('div');
+  wrap.id = 'bnp-loader';
+  wrap.innerHTML = `
+  <div class="bnp-overlay" role="alertdialog" aria-live="assertive" aria-label="Завантаження">
+    <div class="bnp-square" aria-hidden="true">
+      <div class="bird"></div>
+      <div class="bird"></div>
+      <div class="bird"></div>
+      <div class="bird"></div>
+    </div>
+  </div>`;
+
+  const style = document.createElement('style');
+  style.id = 'bnp-loader-style';
+  style.textContent = `
+  .bnp-overlay{
+    position:fixed; inset:0; z-index:999999;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.45); backdrop-filter:blur(2px);
+  }
+  .bnp-square{
+    position:relative; width:120px; height:120px; border-radius:16px; overflow:hidden;
+    background: linear-gradient(180deg, #e7f3ea 0%, #00854b 100%);
+    box-shadow:0 8px 28px rgba(0,0,0,.35);
+  }
+
+  /* базова форма «зірочки» — акуратний ромб */
+  .bird{
+    position:absolute; inset:auto; /* не прив’язуємось, рух дає offset-path */
+    width:12px; height:12px;
+    background:#fff;
+    clip-path:polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+    opacity:0;
+    /* Рух по дузі: старт (правий-нижній) -> через ліву середину -> фініш (правий-верхній) */
+    offset-path: path("M 110 110 C 20 90, 10 60, 100 10");
+    offset-rotate: 0deg;
+    animation: bnp-fly 2.8s linear infinite;
+  }
+  .bird:nth-child(2){ animation-delay:.45s }
+  .bird:nth-child(3){ animation-delay:.9s  }
+  .bird:nth-child(4){ animation-delay:1.35s }
+
+  @keyframes bnp-fly{
+    0%   { offset-distance: 0%;   transform: scale(.55) rotate(0deg);  opacity:0 }
+    10%  {                         transform: scale(.7)  rotate(4deg);  opacity:1 }
+    55%  { offset-distance: 55%;  transform: scale(1.1) rotate(10deg); opacity:1 }
+    85%  {                         transform: scale(1.45)rotate(16deg); opacity:.85 }
+    100% { offset-distance: 100%; transform: scale(1.65)rotate(20deg); opacity:0 }
+  }
+
+  /* Фолбек для браузерів без offset-path */
+  @supports not (offset-path: path("M0,0 L10,10")) {
+    .bird{ animation: bnp-fly-fallback 2.8s linear infinite }
+    @keyframes bnp-fly-fallback{
+      0%   { transform: translate(0,0)      scale(.55) rotate(0deg);  opacity:0 }
+      10%  { transform: translate(-10px,-5px) scale(.7)  rotate(4deg);  opacity:1 }
+      55%  { transform: translate(-80px,-50px)scale(1.1) rotate(10deg); opacity:1 }
+      85%  { transform: translate(-10px,-80px)scale(1.45)rotate(16deg); opacity:.85 }
+      100% { transform: translate(40px,-100px)scale(1.65)rotate(20deg); opacity:0 }
+    }
+  }
+  `;
+  document.head.appendChild(style);
+  document.body.appendChild(wrap);
+}
+
+function hideBNPLoader() {
+  document.getElementById('bnp-loader')?.remove();
+  document.getElementById('bnp-loader-style')?.remove();
+}
+// ==== /BNP Paribas Loader ===================================================
+
 
   /***************************************************************************
    * MODULE A: MENU HIDER (ze ckryptu 0.3.6)
@@ -698,48 +775,63 @@ function buildRedsTable(rows) {
 
 
 
-    async function showAllRedsModal() {
+async function showAllRedsModal() {
+  // показуємо лоадер перед створенням модалки
+  showBNPLoader();
+
   const modal = ce('div', { className:'arv-modal' });
   modal.innerHTML = `
     <div class="arv-modal__panel">
       <div class="arv-modal__head">
         <strong>Czerwone kontrakty — ze wszystkich stron</strong>
-        <span class="arv-muted" id="arv-progress">Zbieram... Przyszłły Loader</span>
+        <span class="arv-muted" id="arv-progress">Zbieram... (Працює BNP-лоадер)</span>
         <div style="margin-left:auto"></div>
         <button class="arv-btn" id="arv-close">Zamknąć</button>
       </div>
       <div class="arv-modal__body" id="arv-body"></div>
     </div>
   `;
-      d.body.appendChild(modal);
-      document.documentElement.classList.add('arv-modal-open');
+  d.body.appendChild(modal);
+  document.documentElement.classList.add('arv-modal-open');
 
   $('#arv-close', modal).addEventListener('click', () => {
-  modal.remove();
-  document.documentElement.classList.remove('arv-modal-open');
-});
-
-
-  const reds = await gatherAllRedCases();
-  const body = $('#arv-body', modal);
-  const progress = $('#arv-progress', modal);
-
-  //Filtrujemy zamknięte zlecenia
-  const filtered = reds.filter(it => {
-    const cells = it.cells || [];
-    const etap = (cells[5] || '').toLowerCase().trim();
-    return !etap.includes('zlecenie zamknięte');
+    modal.remove();
+    document.documentElement.classList.remove('arv-modal-open');
   });
 
-  progress.textContent = `Znaleziono: ${filtered.length}`;
+  try {
+    // збираємо всі червоні справи
+    const reds = await gatherAllRedCases();
 
-  if (!filtered.length) {
-    body.innerHTML = '<div class="arv-muted">Brak "czerwonych" dat na dostępbych stronach.</div>';
-    return;
+    // як тільки все зібрали — ховаємо бренд-лоадер
+    hideBNPLoader();
+
+    const body = $('#arv-body', modal);
+    const progress = $('#arv-progress', modal);
+
+    // фільтруємо закриті
+    const filtered = reds.filter(it => {
+      const cells = it.cells || [];
+      const etap = (cells[5] || '').toLowerCase().trim();
+      return !etap.includes('zlecenie zamknięte');
+    });
+
+    progress.textContent = `Znaleziono: ${filtered.length}`;
+
+    if (!filtered.length) {
+      body.innerHTML = '<div class="arv-muted">Brak "czerwonych" dat na dostępnych stronach.</div>';
+      return;
+    }
+
+    body.appendChild(buildRedsTable(filtered));
+
+  } catch (err) {
+    console.error('Помилка під час збору червоних:', err);
+    hideBNPLoader(); // важливо ховати навіть при збої
+    alert('Nie udało się zebrać spraw — sprawdź konsolę.');
   }
-
-  body.appendChild(buildRedsTable(filtered));
 }
+
 
 
     function ensureHeaderAndCells(table) {
