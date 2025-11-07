@@ -45,80 +45,82 @@
     try { const a = ce('a', { href }); return a.href || null; } catch { return null; }
   };
 
-  // ==== BNP Paribas Loader (arc animation) ===================================
-function showBNPLoader() {
-  if (document.getElementById('bnp-loader')) return;
+  // ==== BNP Paribas Loader (arc animation in modal window) ===================================
+
+function showBNPLoader(container) {
+  // container —  ( #arv-body)
+  if (!container || container.querySelector('#bnp-loader')) return;
 
   const wrap = document.createElement('div');
   wrap.id = 'bnp-loader';
   wrap.innerHTML = `
-  <div class="bnp-overlay" role="alertdialog" aria-live="assertive" aria-label="Завантаження">
-    <div class="bnp-square" aria-hidden="true">
+    <div class="bnp-square">
       <div class="bird"></div>
       <div class="bird"></div>
       <div class="bird"></div>
       <div class="bird"></div>
-    </div>
-  </div>`;
+    </div>`;
 
   const style = document.createElement('style');
   style.id = 'bnp-loader-style';
   style.textContent = `
-  .bnp-overlay{
-    position:fixed; inset:0; z-index:999999;
-    display:flex; align-items:center; justify-content:center;
-    background:rgba(0,0,0,.45); backdrop-filter:blur(2px);
-  }
-  .bnp-square{
-    position:relative; width:120px; height:120px; border-radius:16px; overflow:hidden;
-    background: linear-gradient(180deg, #e7f3ea 0%, #00854b 100%);
-    box-shadow:0 8px 28px rgba(0,0,0,.35);
-  }
-
-  /* базова форма «зірочки» — акуратний ромб */
-  .bird{
-    position:absolute; inset:auto; /* не прив’язуємось, рух дає offset-path */
-    width:12px; height:12px;
-    background:#fff;
-    clip-path:polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
-    opacity:0;
-    /* Рух по дузі: старт (правий-нижній) -> через ліву середину -> фініш (правий-верхній) */
-    offset-path: path("M 110 110 C 20 90, 10 60, 100 10");
-    offset-rotate: 0deg;
-    animation: bnp-fly 2.8s linear infinite;
-  }
-  .bird:nth-child(2){ animation-delay:.45s }
-  .bird:nth-child(3){ animation-delay:.9s  }
-  .bird:nth-child(4){ animation-delay:1.35s }
-
-  @keyframes bnp-fly{
-    0%   { offset-distance: 0%;   transform: scale(.55) rotate(0deg);  opacity:0 }
-    10%  {                         transform: scale(.7)  rotate(4deg);  opacity:1 }
-    55%  { offset-distance: 55%;  transform: scale(1.1) rotate(10deg); opacity:1 }
-    85%  {                         transform: scale(1.45)rotate(16deg); opacity:.85 }
-    100% { offset-distance: 100%; transform: scale(1.65)rotate(20deg); opacity:0 }
-  }
-
-  /* Фолбек для браузерів без offset-path */
-  @supports not (offset-path: path("M0,0 L10,10")) {
-    .bird{ animation: bnp-fly-fallback 2.8s linear infinite }
-    @keyframes bnp-fly-fallback{
-      0%   { transform: translate(0,0)      scale(.55) rotate(0deg);  opacity:0 }
-      10%  { transform: translate(-10px,-5px) scale(.7)  rotate(4deg);  opacity:1 }
-      55%  { transform: translate(-80px,-50px)scale(1.1) rotate(10deg); opacity:1 }
-      85%  { transform: translate(-10px,-80px)scale(1.45)rotate(16deg); opacity:.85 }
-      100% { transform: translate(40px,-100px)scale(1.65)rotate(20deg); opacity:0 }
+    #bnp-loader {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 0;
     }
-  }
+    .bnp-square {
+      position: relative;
+      width: 120px;
+      height: 120px;
+      border-radius: 16px;
+      overflow: hidden;
+      background: linear-gradient(180deg, #e7f3ea 0%, #00854b 100%);
+      box-shadow: 0 8px 28px rgba(0,0,0,.25);
+    }
+    .bird {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      background: white;
+      clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+      opacity: 0;
+      offset-path: path("M 110 110 C 20 90, 10 60, 100 10");
+      offset-rotate: 0deg;
+      animation: bnp-fly 2.8s linear infinite;
+    }
+    .bird:nth-child(2){ animation-delay:.45s }
+    .bird:nth-child(3){ animation-delay:.9s  }
+    .bird:nth-child(4){ animation-delay:1.35s }
+
+    @keyframes bnp-fly {
+      0%   { offset-distance: 0%;   transform: scale(.55); opacity: 0; }
+      10%  { opacity: 1; }
+      55%  { offset-distance: 55%;  transform: scale(1.1); opacity: 1; }
+      85%  { transform: scale(1.4); opacity: 0.8; }
+      100% { offset-distance: 100%; transform: scale(1.6); opacity: 0; }
+    }
+
+    @supports not (offset-path: path("M0,0 L10,10")) {
+      .bird{ animation: bnp-fly-fallback 2.8s linear infinite }
+      @keyframes bnp-fly-fallback {
+        0%   { transform: translate(0,0) scale(.55); opacity: 0; }
+        50%  { transform: translate(-60px,-40px) scale(1.1); opacity: 1; }
+        100% { transform: translate(40px,-100px) scale(1.6); opacity: 0; }
+      }
+    }
   `;
   document.head.appendChild(style);
-  document.body.appendChild(wrap);
+  container.innerHTML = ''; // очищаємо контейнер
+  container.appendChild(wrap);
 }
 
-function hideBNPLoader() {
-  document.getElementById('bnp-loader')?.remove();
+function hideBNPLoader(container) {
+  container?.querySelector('#bnp-loader')?.remove();
   document.getElementById('bnp-loader-style')?.remove();
 }
+
 // ==== /BNP Paribas Loader ===================================================
 
 
@@ -416,10 +418,10 @@ function hideBNPLoader() {
     }
   });
 
-  // 🔹 додаємо поточну сторінку
+  //  додаємо поточну сторінку
   links.add(location.href);
 
-  // 🧹 очищаємо від дублікатів за номером сторінки
+  // очищаємо від дублікатів за номером сторінки
   const cleaned = new Map();
   for (const link of links) {
     const m = link.match(/\/page\/(\d+)/);
@@ -461,7 +463,7 @@ async function fetchListPage(url) {
 
   const rows = Array.from(table.querySelectorAll('tbody tr')).filter(tr => tr.querySelector('td'));
 
-  // 🧹 Створюємо унікальний список рядків
+  //  Створюємо унікальний список рядків
   const seen = new Set();
   const uniqueRows = [];
 
@@ -481,7 +483,7 @@ async function fetchListPage(url) {
       else if (m3) id = m3[1];
     }
 
-    // 🔑 Унікальний ключ для фільтрації дублікатів
+    // Унікальний ключ для фільтрації дублікатів
     const key = id || href || JSON.stringify(cells);
 
     if (!seen.has(key)) {
@@ -660,7 +662,6 @@ async function showAllRedsModal() {
     <div class="arv-modal__panel">
       <div class="arv-modal__head">
         <strong>Czerwone kontrakty — ze wszystkich stron</strong>
-        <span class="arv-muted" id="arv-progress">Zbieram...</span>
         <div style="margin-left:auto"></div>
         <button class="arv-btn" id="arv-close">Zamknąć</button>
       </div>
@@ -675,32 +676,35 @@ async function showAllRedsModal() {
     document.documentElement.classList.remove('arv-modal-open');
   });
 
-  const progress = $('#arv-progress', modal);
   const body = $('#arv-body', modal);
 
-  progress.textContent = 'Zbieram dane...';
-  const reds = await gatherAllRedCases();
+  // показуємо лоадер всередині тіла модалки
+  showBNPLoader(body);
 
-  // 🚫 Фільтруємо всі, де рядок містить "zlecenie zamknięte"
-  const filtered = reds.filter(it => {
-    const text = (it.cells || []).join(' ').toLowerCase();
-    return !text.includes('zlecenie zamknięte');
-  });
+  try {
+    const reds = await gatherAllRedCases();
+    const filtered = reds.filter(it => {
+      const cells = it.cells || [];
+      const etap = (cells[5] || '').toLowerCase().trim();
+      return !etap.includes('zlecenie zamknięte');
+    });
 
-  progress.textContent = `Znaleziono: ${filtered.length}`;
+    hideBNPLoader(body);
 
-  if (!filtered.length) {
-    body.innerHTML = '<div class="arv-muted">Brak "czerwonych" dat na dostępnych stronach.</div>';
-    return;
+    if (!filtered.length) {
+      body.innerHTML = '<div class="arv-muted">Brak "czerwonych" dat na dostępnych stronach.</div>';
+      return;
+    }
+
+    body.appendChild(buildRedsTable(filtered));
+
+  } catch (err) {
+    console.error('Помилка під час збору червоних:', err);
+    hideBNPLoader(body);
+    body.innerHTML = '<div class="arv-muted">Wystąpił błąd podczas zbierania danych.</div>';
   }
-
-  body.appendChild(buildRedsTable(filtered));
-
-  // блокування прокрутки сайту при відкритій модалці
-  const stopBgScroll = (e) => { if (e.target === modal) e.preventDefault(); };
-  modal.addEventListener('wheel', stopBgScroll, { passive: false });
-  modal.addEventListener('touchmove', stopBgScroll, { passive: false });
 }
+
 
 
 
