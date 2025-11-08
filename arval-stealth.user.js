@@ -77,9 +77,22 @@ style.textContent = `
     overflow:hidden;
     background:linear-gradient(180deg,#01d284 30%,#00854b 100%);
   }
+  /*biała ramka logo*/
+  .bnp-square::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  border-radius: 6px;
+  pointer-events: none;
+  box-sizing: border-box;
+}
 
-  /* ✨ Зірочки (пташки) */
-  .bird {
+  /* Gwiazdki */
+   .bird {
     position:absolute;
     width:24px;
     height:14px;
@@ -87,7 +100,7 @@ style.textContent = `
     clip-path:polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
     opacity:0;
     /* 🌀 Траєкторія як у логотипі — з правого низу через лівий низ до правого верху */
-    offset-path: path("M 105 90 C 0 120, -5 45, 100 15");
+    offset-path: path("M 90 90 C 0 120, -5 45, 100 15");
     offset-rotate: 0deg;
     animation: bnp-fly 3.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
     filter: drop-shadow(0 0 2px #fff8) drop-shadow(0 0 4px #fff5);
