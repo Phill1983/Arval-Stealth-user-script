@@ -51,13 +51,14 @@ function showBNPLoader(container) {
 
   const wrap = document.createElement('div');
   wrap.id = 'bnp-loader';
-  wrap.innerHTML = `
-    <div class="bnp-square">
-      <div class="bird"></div>
-      <div class="bird"></div>
-      <div class="bird"></div>
-      <div class="bird"></div>
-    </div>`;
+wrap.innerHTML = `
+  <div class="bnp-square">
+    <div class="bird"><div class="star"></div></div>
+    <div class="bird"><div class="star"></div></div>
+    <div class="bird"><div class="star"></div></div>
+    <div class="bird"><div class="star"></div></div>
+  </div>`;
+
 
   const style = document.createElement('style');
   style.id = 'bnp-loader-style';
@@ -69,71 +70,83 @@ style.textContent = `
     padding:40px 0;
   }
 
-  .bnp-square {
-    position:relative;
-    width:120px;
-    height:120px;
-    border-radius:16px;
-    overflow:hidden;
-    background:linear-gradient(180deg,#01d284 30%,#00854b 100%);
-  }
-  /*biała ramka logo*/
-  .bnp-square::after {
-  content: "";
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  right: 4px;
-  bottom: 4px;
-  border: 1.5px solid rgba(255, 255, 255, 0.9);
-  border-radius: 6px;
-  pointer-events: none;
-  box-sizing: border-box;
+  /* контейнер для 3D */
+.bnp-square{
+  position:relative;
+  width:120px;height:120px;border-radius:16px;overflow:hidden;
+  background:linear-gradient(180deg,#01d284 30%,#00854b 100%);
+  perspective: 300px;           /* додаємо перспективу для 3D */
+}
+.bnp-square::after{
+  content:"";position:absolute;inset:4px;border:1.5px solid rgba(255,255,255,.9);
+  border-radius:12px;pointer-events:none;box-sizing:border-box;
 }
 
-  /* Gwiazdki */
-   .bird {
-    position:absolute;
-    width:24px;
-    height:14px;
-    background:#fff;
-    clip-path:polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
-    opacity:0;
-    /* 🌀 Траєкторія як у логотипі — з правого низу через лівий низ до правого верху */
-    offset-path: path("M 90 90 C 0 120, -5 45, 100 15");
-    offset-rotate: 0deg;
-    animation: bnp-fly 3.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
-    filter: drop-shadow(0 0 2px #fff8) drop-shadow(0 0 4px #fff5);
-  }
-
-  .bird:nth-child(2){animation-delay:.4s}
-  .bird:nth-child(3){animation-delay:.8s}
-  .bird:nth-child(4){animation-delay:1.2s}
-
-@keyframes bnp-fly {
-  0% {
-    offset-distance: 0%;
-    transform: scale(0.6) rotate(0deg);
-    opacity: 0;
-  }
-  10% {
-    opacity: 1;
-    transform: scale(0.8) rotate(90deg);
-  }
-  40% {
-    transform: scale(1.2) rotate(180deg);
-    opacity: 1;
-  }
-  70% {
-    transform: scale(1.6) rotate(270deg);
-    opacity: 0.9;
-  }
-  100% {
-    offset-distance: 100%;
-    transform: scale(2.0) rotate(360deg); /* 🔸 максимальне збільшення */
-    opacity: 0;
-  }
+/* обгортка, яка летить по дузі й орієнтується вздовж маршруту */
+.bird{
+  position:absolute;opacity:0;
+  offset-path: path("M 80 90 C 0 120, -7 45, 100 15"); /* піднята та округліша дуга */
+  offset-rotate: auto;                                  /* вісі елемента уздовж траєкторії */
+  animation: bnp-fly 3.5s ease-in-out infinite;
+  transform-style: preserve-3d;                         /* щоб діти мали 3D */
 }
+
+/* власне зірка всередині: крутиться навколо локальної осі X (вздовж руху) */
+.star{
+  width:24px;height:14px;background:#fff;
+  clip-path: polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);
+  filter: drop-shadow(0 0 2px #fff8) drop-shadow(0 0 4px #fff5);
+  transform-origin: 50% 50%;
+  animation: star-roll 10s ease-in-out infinite; /* окрема X-ротація */
+}
+
+/* зсув стартів */
+.bird:nth-child(2){animation-delay:.35s}
+.bird:nth-child(3){animation-delay:.7s}
+.bird:nth-child(4){animation-delay:1.05s}
+
+/* політ + масштаб + прозорість (обертання навколо осі руху ми даємо на .star) */
+@keyframes bnp-fly{
+  0%   { offset-distance:0%;   transform: scale(0.6) rotate(0deg);  opacity:0 }
+  10%  {                       transform: scale(0.8) rotate(8deg);  opacity:.95 }
+  40%  {                       transform: scale(1.2) rotate(18deg); opacity:1 }
+  70%  {                       transform: scale(1.6) rotate(28deg); opacity:.9 }
+  100% { offset-distance:100%; transform: scale(2.0) rotate(36deg); opacity:0 }
+}
+
+/* кручення навколо локальної осі X (вздовж траєкторії) */
+/* 1) Посилена послідовна ротація: бурст між 35% і 65% */
+@keyframes star-roll {
+  0%   { transform: rotateX(0deg)    rotateZ(0deg); }
+  20%  { transform: rotateX(216deg)  rotateZ(40deg); }
+  35%  { transform: rotateX(360deg)  rotateZ(90deg); }   /* початок бурсту */
+  50%  { transform: rotateX(540deg)  rotateZ(220deg); }  /* 🌬️ пік «вітру» */
+  65%  { transform: rotateX(720deg)  rotateZ(300deg); }  /* кінець бурсту */
+  80%  { transform: rotateX(864deg)  rotateZ(330deg); }
+  100% { transform: rotateX(1080deg) rotateZ(360deg); }  /* 1 оберт Z за цикл */
+}
+
+/* 2) Зсув фази для кожної зірки — по черзі «крутить бурст» */
+.bird:nth-child(1) .star { animation-delay: 0s; }          /* 0/4 циклу */
+.bird:nth-child(2) .star { animation-delay: 0.875s; }      /* 1/4 від 3.5s */
+.bird:nth-child(3) .star { animation-delay: 1.75s; }       /* 2/4 */
+.bird:nth-child(4) .star { animation-delay: 2.625s; }      /* 3/4 */
+
+/* якщо десь стояли інші затримки для .star — прибери їх.
+   На самій .star має бути: animation: star-roll 3.5s ease-in-out infinite; */
+
+
+/* fallback без offset-path */
+@supports not (offset-path:path("M0,0 L10,10")){
+  .bird{ animation: bnp-fly-fallback 3.5s ease-in-out infinite }
+  @keyframes bnp-fly-fallback{
+    0%   { transform: translate(0,0)    scale(0.6);  opacity:0 }
+    50%  { transform: translate(-60px,-30px) scale(1.2); opacity:1 }
+    100% { transform: translate(40px,-90px)  scale(2.0); opacity:0 }
+  }
+  /* X-обертання зірки лишається тим самим */
+}
+
 
   /* fallback */
   @supports not (offset-path:path("M0,0 L10,10")) {
