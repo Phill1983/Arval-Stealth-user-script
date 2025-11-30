@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.1.9
+// @version      4.2.0
 // @description  Automatyzacja roboty z Arval
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -169,6 +169,95 @@ function hideBNPLoader(container) {
   document.getElementById('bnp-loader-style')?.remove();
 }
 // ==== /BNP Loader ====
+
+    // ===== Arval Stealth — notifications helper =====
+
+  // URL сторінки "Powiadomienia" (list all notifications)
+  const AS_NOTIFICATIONS_URL = '/common/notification';
+
+  /**
+   * Парсимо HTML сторінки "Powiadomienia" і будуємо мапу:
+   *   caseId (string) -> { notificationId, notificationHref }
+   */
+  function asBuildNotificationsMapFromDoc(doc) {
+    const map = new Map();
+
+    // шукаємо таблицю, в якій є посилання /common/notification/setread
+    const tables = Array.from(doc.querySelectorAll('table'));
+    let table = tables.find(t =>
+      t.querySelector('a[href*="/common/notification/setread"]')
+    );
+
+    if (!table) {
+      console.warn('[AS][notif] Не знайшов таблицю з повідомленнями на сторінці Powiadomienia');
+      return map;
+    }
+
+    const rows = Array.from(table.querySelectorAll('tbody tr'))
+      .filter(tr => tr.querySelector('td'));
+
+    for (const tr of rows) {
+      const caseLink  = tr.querySelector('a[href*="/claims/insurancecase"]');
+      const notifLink = tr.querySelector('a[href*="/common/notification/setread"]');
+
+      if (!caseLink || !notifLink) continue;
+
+      const caseHref  = caseLink.getAttribute('href')  || '';
+      const notifHref = notifLink.getAttribute('href') || '';
+
+      const mCase  = caseHref.match(/\/claims\/insurancecase\/id\/(\d+)/);
+      const mNotif = notifHref.match(/\/setread\/id\/(\d+)/);
+
+      if (!mCase || !mNotif) continue;
+
+      const caseId        = mCase[1];
+      const notificationId = mNotif[1];
+
+      map.set(caseId, {
+        notificationId,
+        notificationHref: toAbsUrl(notifHref) || notifHref
+      });
+    }
+
+    return map;
+  }
+
+  /**
+   * Фоном тягнемо сторінку "Powiadomienia", парсимо її
+   * і зберігаємо мапу в window.AS_notificationsMap
+   */
+  async function asFetchNotificationsMap() {
+    try {
+      const absUrl = toAbsUrl(AS_NOTIFICATIONS_URL) || AS_NOTIFICATIONS_URL;
+
+      const res = await fetch(absUrl, {
+        credentials: 'include',
+        cache: 'no-store',
+        mode: 'same-origin',
+        headers: { Accept: 'text/html' }
+      });
+
+      if (!res.ok) {
+        console.warn('[AS][notif] Помилка завантаження сторінки Powiadomienia:', res.status);
+        window.AS_notificationsMap = new Map();
+        return window.AS_notificationsMap;
+      }
+
+      const html = await res.text();
+      const doc  = new DOMParser().parseFromString(html, 'text/html');
+
+      const map = asBuildNotificationsMapFromDoc(doc);
+      window.AS_notificationsMap = map;
+
+      console.log('[AS][notif] Мапа повідомлень (caseId -> notification):', map);
+      return map;
+    } catch (err) {
+      console.error('[AS][notif] Помилка при завантаженні/парсингу Powiadomienia:', err);
+      window.AS_notificationsMap = new Map();
+      return window.AS_notificationsMap;
+    }
+  }
+  // ===== /Arval Stealth notifications helper =====
 
 
   /***************************************************************************
@@ -914,13 +1003,21 @@ function buildRedsTable(rows) {
     function init() {
       if (!CFG.enableDateCol) return;
       if (!onListPage()) return;
+
       injectDateStylesOnce();
       ensureHeaderToolbar();
+
+      // 🔔 тут тягнемо мапу повідомлень (Powiadomienia)
+      if (typeof asFetchNotificationsMap === 'function') {
+        asFetchNotificationsMap();
+      }
+
       hookNavigation();
       hookTableObserver();
       processTableOnce();
       runAfterNav();
     }
+
 
     // publiczny trygier do SPA
     const trigger = () => init();
