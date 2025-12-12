@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.2.0
+// @version      4.2.1
 // @description  Automatyzacja roboty z Arval
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -73,13 +73,13 @@ style.textContent = `
   /* контейнер для 3D */
 .bnp-square{
   position:relative;
-  width:120px;height:120px;border-radius:16px;overflow:hidden;
-  background:linear-gradient(180deg,#01d284 30%,#00854b 100%);
+  width:120px;height:120px;border-radius:8px;overflow:hidden;
+  background:linear-gradient(180deg,#01d284 20%,#00854b 100%);
   perspective: 300px;           /* додаємо перспективу для 3D */
 }
 .bnp-square::after{
   content:"";position:absolute;inset:4px;border:1.5px solid rgba(255,255,255,.9);
-  border-radius:12px;pointer-events:none;box-sizing:border-box;
+  border-radius:6px;pointer-events:none;box-sizing:border-box;
 }
 
 /* обгортка, яка летить по дузі й орієнтується вздовж маршруту */
@@ -169,95 +169,6 @@ function hideBNPLoader(container) {
   document.getElementById('bnp-loader-style')?.remove();
 }
 // ==== /BNP Loader ====
-
-    // ===== Arval Stealth — notifications helper =====
-
-  // URL сторінки "Powiadomienia" (list all notifications)
-  const AS_NOTIFICATIONS_URL = '/common/notification';
-
-  /**
-   * Парсимо HTML сторінки "Powiadomienia" і будуємо мапу:
-   *   caseId (string) -> { notificationId, notificationHref }
-   */
-  function asBuildNotificationsMapFromDoc(doc) {
-    const map = new Map();
-
-    // шукаємо таблицю, в якій є посилання /common/notification/setread
-    const tables = Array.from(doc.querySelectorAll('table'));
-    let table = tables.find(t =>
-      t.querySelector('a[href*="/common/notification/setread"]')
-    );
-
-    if (!table) {
-      console.warn('[AS][notif] Не знайшов таблицю з повідомленнями на сторінці Powiadomienia');
-      return map;
-    }
-
-    const rows = Array.from(table.querySelectorAll('tbody tr'))
-      .filter(tr => tr.querySelector('td'));
-
-    for (const tr of rows) {
-      const caseLink  = tr.querySelector('a[href*="/claims/insurancecase"]');
-      const notifLink = tr.querySelector('a[href*="/common/notification/setread"]');
-
-      if (!caseLink || !notifLink) continue;
-
-      const caseHref  = caseLink.getAttribute('href')  || '';
-      const notifHref = notifLink.getAttribute('href') || '';
-
-      const mCase  = caseHref.match(/\/claims\/insurancecase\/id\/(\d+)/);
-      const mNotif = notifHref.match(/\/setread\/id\/(\d+)/);
-
-      if (!mCase || !mNotif) continue;
-
-      const caseId        = mCase[1];
-      const notificationId = mNotif[1];
-
-      map.set(caseId, {
-        notificationId,
-        notificationHref: toAbsUrl(notifHref) || notifHref
-      });
-    }
-
-    return map;
-  }
-
-  /**
-   * Фоном тягнемо сторінку "Powiadomienia", парсимо її
-   * і зберігаємо мапу в window.AS_notificationsMap
-   */
-  async function asFetchNotificationsMap() {
-    try {
-      const absUrl = toAbsUrl(AS_NOTIFICATIONS_URL) || AS_NOTIFICATIONS_URL;
-
-      const res = await fetch(absUrl, {
-        credentials: 'include',
-        cache: 'no-store',
-        mode: 'same-origin',
-        headers: { Accept: 'text/html' }
-      });
-
-      if (!res.ok) {
-        console.warn('[AS][notif] Помилка завантаження сторінки Powiadomienia:', res.status);
-        window.AS_notificationsMap = new Map();
-        return window.AS_notificationsMap;
-      }
-
-      const html = await res.text();
-      const doc  = new DOMParser().parseFromString(html, 'text/html');
-
-      const map = asBuildNotificationsMapFromDoc(doc);
-      window.AS_notificationsMap = map;
-
-      console.log('[AS][notif] Мапа повідомлень (caseId -> notification):', map);
-      return map;
-    } catch (err) {
-      console.error('[AS][notif] Помилка при завантаженні/парсингу Powiadomienia:', err);
-      window.AS_notificationsMap = new Map();
-      return window.AS_notificationsMap;
-    }
-  }
-  // ===== /Arval Stealth notifications helper =====
 
 
   /***************************************************************************
@@ -1003,27 +914,187 @@ function buildRedsTable(rows) {
     function init() {
       if (!CFG.enableDateCol) return;
       if (!onListPage()) return;
-
       injectDateStylesOnce();
       ensureHeaderToolbar();
-
-      // 🔔 тут тягнемо мапу повідомлень (Powiadomienia)
-      if (typeof asFetchNotificationsMap === 'function') {
-        asFetchNotificationsMap();
-      }
-
       hookNavigation();
       hookTableObserver();
       processTableOnce();
       runAfterNav();
     }
 
-
     // publiczny trygier do SPA
     const trigger = () => init();
 
     return { init, trigger };
   })();
+
+
+
+
+/***************************************************************************
+ * MODULE C: CHAT TOOLS — стабільна версія з polling
+ ***************************************************************************/
+const ChatTools = (() => {
+  const BTN_ID = 'arval-chat-auto-archive-btn';
+
+  function findModal() {
+    // Ловимо саме МОДАЛКУ КОМУНІКАТОРА
+    const modals = document.querySelectorAll('.reveal.small');
+    for (const modal of modals) {
+      const header = modal.querySelector('h3, h2, h1, .ui-draggable-handle');
+      if (!header) continue;
+
+      const txt = (header.textContent || '').trim().toLowerCase();
+      if (txt.includes('komunikator')) return modal;
+    }
+    return null;
+  }
+
+  function getCaseId(modal) {
+    if (!modal) return null;
+
+    const form = modal.querySelector('form[action*="/claims/insurancecase/chat/"]');
+    if (form) {
+      const action = form.getAttribute('action') || '';
+      const m = action.match(/\/id\/(\d+)/);
+      if (m) return m[1];
+    }
+    return null;
+  }
+
+  function hideOriginalArchiveButton(modal) {
+    const btn = Array.from(
+      modal.querySelectorAll('a.button.small.secondary')
+    ).find(a =>
+      (a.textContent || '').trim().toLowerCase() ===
+      'archiwizuj powiadomienia dot. tej sprawy'
+    );
+
+    if (btn) {
+      btn.style.display = 'none';
+      console.log('%c[Arval Stealth] Сховав оригінальну кнопку архівації', 'color:orange');
+    }
+  }
+
+  function injectButton(modal) {
+    if (!modal) return;
+
+    const footer = modal.querySelector('.button-group');
+    if (!footer) return;
+
+    if (footer.querySelector('#' + BTN_ID)) return;
+
+    const btn = document.createElement('button');
+    btn.id = BTN_ID;
+    btn.type = 'button';
+    btn.className = 'button small success';
+    btn.textContent = 'Auto-archiwizacja';
+
+    btn.addEventListener('click', async () => {
+  const id = getCaseId(modal);
+  if (!id) {
+    alert('Nie mogę odczytać ID sprawy.');
+    return;
+  }
+
+  await autoArchiveNotifications(id);
+});
+
+
+    footer.appendChild(btn);
+    console.log('%c[Arval Stealth] Кнопка вставлена', 'color:lime');
+  }
+
+  function init() {
+    console.log('%c[Arval Stealth] ChatTools v3 запущено', 'color:cyan');
+
+    // 🔥 Гарантований спосіб: перевіряємо DOM кожні 300 мс
+    setInterval(() => {
+      const modal = findModal();
+      if (!modal) return;
+
+      injectButton(modal);
+      hideOriginalArchiveButton(modal);
+    }, 300);
+  }
+
+
+  async function autoArchiveNotifications(caseId) {
+  console.log('[Arval Stealth] Archiwizacja dla sprawy:', caseId);
+
+  const url = '/common/notification';
+
+  // 1. Завантажуємо HTML powiadomień
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) {
+    alert('Błąd podczas pobierania powiadomień.');
+    return;
+  }
+
+  const text = await res.text();
+
+  // 2. Парсимо DOM
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, 'text/html');
+
+  // 3. Знаходимо wszystkie <tr>
+  const rows = Array.from(doc.querySelectorAll('tr'));
+
+  // 4. Фільтруємо ті, що належать до нашої sprawy
+  const matching = rows.filter(tr => {
+    const link = tr.querySelector('a[href*="/claims/insurancecase/info/id/"]');
+    if (!link) return false;
+
+    const href = link.getAttribute('href') || '';
+    return href.includes('/id/' + caseId);
+  });
+
+  if (matching.length === 0) {
+    alert('Brak powiadomień dla sprawy ' + caseId);
+    return;
+  }
+
+  // 5. Стягуємо лінки архівації
+  const archiveLinks = [];
+
+  for (const tr of matching) {
+    const a = tr.querySelector('a[href*="/common/notification/setread/"]');
+    if (a) {
+      archiveLinks.push(a.getAttribute('href'));
+    }
+  }
+
+  if (archiveLinks.length === 0) {
+    alert('Nie znaleziono przycisków archiwizacji.');
+    return;
+  }
+
+  // 6. Архівуємо по одному з паузою
+  let ok = 0;
+
+  for (const link of archiveLinks) {
+    try {
+      await fetch(link, { credentials: 'include' });
+      ok++;
+      await new Promise(r => setTimeout(r, 150)); // невелика пауза
+    } catch (e) {
+      console.warn('Błąd archiwizacji:', e);
+    }
+  }
+
+  alert(`Zaarchiwizowano ${ok} powiadomienia dla sprawy ${caseId}.`);
+  console.log('[Arval Stealth] Archiwizacja zakończona.');
+}
+
+
+  return { init };
+})();
+
+
+
+
+
+
 
   /***************************************************************************
    * BOOT
@@ -1032,11 +1103,16 @@ function buildRedsTable(rows) {
   MenuHider.initOnce();
   MenuHider.rearm();
 
-  // Daty - gdy DOM zgenerowany (za każdym razem przy SPA-nawigacji przez trigger)
   const bootDates = () => DateCol.init();
+  const bootChat  = () => ChatTools.init();
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bootDates, { once: true });
+    document.addEventListener('DOMContentLoaded', () => {
+      bootDates();
+      bootChat();
+    }, { once: true });
   } else {
     bootDates();
+    bootChat();
   }
 })();
