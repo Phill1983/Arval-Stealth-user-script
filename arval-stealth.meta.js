@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.2.0
+// @version      4.2.2
 // @description  Automatyzacja roboty z Arval
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
