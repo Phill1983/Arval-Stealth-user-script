@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.2.1
+// @version      4.2.2
 // @description  Automatyzacja roboty z Arval
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -962,6 +962,29 @@ const ChatTools = (() => {
     return null;
   }
 
+  function getPlateFromModal(modal) {
+  if (!modal) return null;
+
+  const header = modal.querySelector('h3, h2, h1, .ui-draggable-handle');
+  const txt = (header?.textContent || '').trim();
+
+  // np. "Komunikator WE1JL41 - /AGO"
+  const m = txt.match(/\b[A-Z0-9]{5,10}\b/);
+  return m ? m[0] : null;
+}
+
+function extractNotifPreviewFromTr(tr) {
+  const tds = Array.from(tr.querySelectorAll('td'));
+  const text = (tds[1]?.textContent || tr.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const date = (tds[2]?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { text, date };
+}
+
+
   function hideOriginalArchiveButton(modal) {
     const btn = Array.from(
       modal.querySelectorAll('a.button.small.secondary')
@@ -997,7 +1020,7 @@ const ChatTools = (() => {
     return;
   }
 
-  await autoArchiveNotifications(id);
+  await autoArchiveNotifications(id, modal);
 });
 
 
@@ -1019,80 +1042,157 @@ const ChatTools = (() => {
   }
 
 
-  async function autoArchiveNotifications(caseId) {
-  console.log('[Arval Stealth] Archiwizacja dla sprawy:', caseId);
+  function normalizePlate(s) {
+  return (s || '').toUpperCase().replace(/\s+/g, '').trim();
+}
+
+function extractPlateFromNotificationText(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+
+  // 1) Найнадійніше: "Szkoda WN3658V ..."
+  let m = t.match(/\bSzkoda\s+([A-Z0-9]{5,12})\b/i);
+  if (m && m[1] && /[A-Z]/i.test(m[1]) && /\d/.test(m[1])) {
+    return normalizePlate(m[1]);
+  }
+
+  // 2) "pojazdu o numerze: WZ282GY ..."
+  m = t.match(/\bpojazdu\s+o\s+numerze:\s*([A-Z0-9]{5,12})\b/i);
+  if (m && m[1] && /[A-Z]/i.test(m[1]) && /\d/.test(m[1])) {
+    return normalizePlate(m[1]);
+  }
+
+  // 3) "numerze: WZ282GY" (але НЕ "dodano nowy komunikat")
+  m = t.match(/\bnumerze:\s*([A-Z0-9]{5,12})\b/i);
+  if (m && m[1]) {
+    const token = normalizePlate(m[1]);
+    if (token !== 'DODANONOWY' && /[A-Z]/.test(token) && /\d/.test(token)) {
+      return token;
+    }
+  }
+
+  return null;
+}
+
+
+
+async function autoArchiveNotifications(caseId, modal) {
+  console.log('[Arval Stealth] Archiwizacja: start. caseId=', caseId);
 
   const url = '/common/notification';
 
-  // 1. Завантажуємо HTML powiadomień
-  const res = await fetch(url, { credentials: 'include' });
+  const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
   if (!res.ok) {
     alert('Błąd podczas pobierania powiadomień.');
     return;
   }
 
-  const text = await res.text();
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
 
-  // 2. Парсимо DOM
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(text, 'text/html');
+  const rows = Array.from(doc.querySelectorAll('tr')).filter(tr =>
+    tr.querySelector('a[href*="/common/notification/setread/"]')
+  );
 
-  // 3. Знаходимо wszystkie <tr>
-  const rows = Array.from(doc.querySelectorAll('tr'));
-
-  // 4. Фільтруємо ті, що належать до нашої sprawy
-  const matching = rows.filter(tr => {
+  // 1️⃣ WG ID SPRAWY
+  const byCase = rows.filter(tr => {
     const link = tr.querySelector('a[href*="/claims/insurancecase/info/id/"]');
-    if (!link) return false;
-
-    const href = link.getAttribute('href') || '';
+    const href = link?.getAttribute('href') || '';
     return href.includes('/id/' + caseId);
   });
 
-  if (matching.length === 0) {
-    alert('Brak powiadomień dla sprawy ' + caseId);
-    return;
+  // 2️⃣ WG DNZ (беремо номер максимально надійно)
+  // 2.1 пробуємо з заголовка модалки
+  let plate = getPlateFromModal(modal);
+
+  // 2.2 якщо з модалки не вийшло — беремо з першого повідомлення знайденого по caseId
+  if (!plate && byCase.length) {
+    const prev = extractNotifPreviewFromTr(byCase[0]); // {text,date}
+    plate = extractPlateFromNotificationText(prev.text);
   }
 
-  // 5. Стягуємо лінки архівації
-  const archiveLinks = [];
+  const plateUpper = plate ? plate.toUpperCase() : null;
 
-  for (const tr of matching) {
+  let byPlate = [];
+  if (plateUpper) {
+    byPlate = rows.filter(tr =>
+      (tr.textContent || '').toUpperCase().includes(plateUpper)
+    );
+  }
+
+  // 3️⃣ UNION без дублів
+  const uniq = new Map();
+
+  const addRow = (tr) => {
     const a = tr.querySelector('a[href*="/common/notification/setread/"]');
-    if (a) {
-      archiveLinks.push(a.getAttribute('href'));
-    }
-  }
+    if (!a) return;
 
-  if (archiveLinks.length === 0) {
-    alert('Nie znaleziono przycisków archiwizacji.');
+    const href = a.getAttribute('href');
+    const m = href.match(/\/setread\/id\/(\d+)/);
+    const key = m ? m[1] : href;
+
+    if (!uniq.has(key)) {
+      const prev = extractNotifPreviewFromTr(tr);
+      uniq.set(key, { href, ...prev });
+    }
+  };
+
+  byCase.forEach(addRow);
+  byPlate.forEach(addRow);
+
+  const all = Array.from(uniq.values());
+
+  if (!all.length) {
+    alert('Brak powiadomień do archiwizacji.');
     return;
   }
 
-  // 6. Архівуємо по одному з паузою
-  let ok = 0;
+  // 4️⃣ POTWIERDZENIE
+  const list = all
+    .slice(0, 30)
+    .map((x, i) =>
+      `${i + 1}. [${x.date || '—'}] ${x.text.slice(0, 120)}`
+    )
+    .join('\n');
 
-  for (const link of archiveLinks) {
+  const more = all.length > 30 ? `\n… +${all.length - 30} więcej` : '';
+
+  // const ok = confirm(
+  //   `Znaleziono:\n` +
+  //   // `• wg ID sprawy: ${byCase.length}\n` +
+  //   `• wg N.R. (${plateUpper || '—'}): ${byPlate.length}\n` +
+  //   `• razem: ${all.length}\n\n` +
+  //   list + more + '\n\n' +
+  //   'Archiwizować wszystko?'
+  // );
+
+  const ok = confirm(
+    `Według N.R. ${plateUpper || '—'},\n\n` +
+    `znaleziono powiadomień: ${all.length}\n\n` +
+    list + more + '\n\n' +
+    'Archiwizować wszystko?'
+  );
+
+  if (!ok) return;
+
+  // 5️⃣ ARCHIWIZACJA
+  let done = 0;
+  for (const item of all) {
     try {
-      await fetch(link, { credentials: 'include' });
-      ok++;
+      await fetch(item.href, { credentials: 'include', cache: 'no-store' });
+      done++;
       await new Promise(r => setTimeout(r, 150)); // невелика пауза
     } catch (e) {
       console.warn('Błąd archiwizacji:', e);
     }
   }
 
-  alert(`Zaarchiwizowano ${ok} powiadomienia dla sprawy ${caseId}.`);
-  console.log('[Arval Stealth] Archiwizacja zakończona.');
+  alert(`Zaarchiwizowano ${done}/${all.length} powiadomień.`);
 }
+
 
 
   return { init };
 })();
-
-
-
-
 
 
 
