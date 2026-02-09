@@ -2367,6 +2367,24 @@
     }
 
     function init() {
+      function isCkFinderWindow(doc = document) {
+        const t = (doc.title || "").toLowerCase();
+        if (t.includes("ckfinder")) return true;
+
+        if (
+          doc.querySelector(
+            '[class^="ckf-"], [class*=" ckf-"], .ckf, #ckf, #ckfinder',
+          )
+        ) {
+          return true;
+        }
+
+        return false;
+      }
+
+      // ✅ ВАЖЛИВО: виходимо одразу
+      if (isCkFinderWindow()) return;
+
       if (window.__arvToastScannerInited) return;
       window.__arvToastScannerInited = true;
 
@@ -2379,14 +2397,8 @@
       hookManualOpenClicksOnce();
       hookUrlCaseDetectionOnce();
 
-      // ✅ 1) миттєво показуємо те, що вже є в localStorage
       renderFromStorage();
-
-      // ✅ 2) запускаємо таймери як і було
       startAuto();
-
-      // ✅ 3) робимо стартовий скан, але НЕ force
-      // якщо cooldown ще не минув — runScan просто зробить renderFromStorage і вийде
       runScan({ mode: "both", force: false });
     }
 
