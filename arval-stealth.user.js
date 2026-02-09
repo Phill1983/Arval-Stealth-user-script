@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.2.3
+// @version      4.2.4
 // @description  Automatyzacja roboty z Arval
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
@@ -1485,15 +1485,17 @@
         border:1px solid rgba(0,0,0,.12);
         border-left:6px solid #00965E;
         border-radius:5px;
-        padding:10px 12px;
+        padding:0px 0px 10px;;
         background:#fff;
         box-shadow:0 2px 10px rgba(0,0,0,.08);
         font:14px/1.35 system-ui,Segoe UI,Arial,sans-serif;
       }
-      .arv-toast__title{ font-weight:800; margin-bottom:6px; }
-      .arv-toast__row{ margin:2px 0; }
+      .arv-toast__value{ font-weight:600; font-size:15px; }
+      .arv-toast__title{ font-weight:800; margin-bottom:6px; background:linear-gradient(90deg,#00965E,#007A4F); color:#fff; padding:4px 8px; border-radius:0px 4px 4px 0px; font-size:15px; text-align:center; }
+      .arv-toast__row{ margin:2px 0 0 8px; }
       .arv-toast__btns{ margin-top:8px; display:flex; gap:8px; }
       .arv-toast__btn{
+        margin: 8px;
         display:inline-flex;
         align-items:center;
         gap:8px;
@@ -1855,16 +1857,17 @@
       const prev = loadAlertsState(); // key=caseId
       const next = { ...prev };
 
-      const keysNow = new Set(
-        (all || []).map((x) => String(x?.key || "").trim()).filter(Boolean),
-      );
-
       const scopeBuckets =
         scope === "open"
           ? new Set(["open"])
           : scope === "closed"
             ? new Set(["closed"])
             : new Set(["open", "closed"]); // both / all
+
+      // keysNow — тільки ті keys, які ми реально побачили в цьому скані
+      const keysNow = new Set(
+        (all || []).map((x) => String(x?.key || "").trim()).filter(Boolean),
+      );
 
       // 1) Апдейт того, що ми знайшли зараз
       for (const x of all || []) {
@@ -1873,11 +1876,24 @@
 
         const prevItem = prev[key];
 
-        // bucket: якщо в нових даних нема — лишаємо попередній
+        // bucket: якщо в нових даних нема — лишаємо попередній (але зазвичай він є)
         const bucket = x.bucket || prevItem?.bucket || "open";
 
         // ✅ sticky: якщо колись було isClosed=true — не даємо стати false
         const isClosed = prevItem?.isClosed === true ? true : !!x.isClosed;
+
+        // ✅ анти-дубль: беремо з результатів скану, або з prev (якщо було), або дефолт
+        const occurrences = Number.isFinite(x.occurrences)
+          ? x.occurrences
+          : Number.isFinite(prevItem?.occurrences)
+            ? prevItem.occurrences
+            : 1;
+
+        const seenIn = Array.isArray(x.seenIn)
+          ? x.seenIn
+          : Array.isArray(prevItem?.seenIn)
+            ? prevItem.seenIn
+            : [];
 
         next[key] = {
           key,
@@ -1887,11 +1903,19 @@
           stage: x.stage || prevItem?.stage || "—",
           openUrl: x.openUrl || prevItem?.openUrl || null,
 
-          bucket, // ✅ технічне
-          isClosed, // ✅ істина (з Etap)
+          bucket, // технічне: де бачили
+          isClosed, // істина: тільки з Etap
+
+          // ✅ нове: анти-дубль та спостережуваність
+          occurrences,
+          seenIn,
 
           active: true,
           lastSeen: now,
+
+          // якщо було погашено раніше — при повторному знаходженні знімаємо маркери
+          _clearedBy: undefined,
+          _clearedAt: undefined,
         };
       }
 
@@ -1903,11 +1927,14 @@
         const bucket = item.bucket || "open";
         if (!scopeBuckets.has(bucket)) continue;
 
+        // якщо key не зустрівся в цьому скані — деактивуємо
         if (!keysNow.has(k)) {
           next[k] = {
             ...item,
             active: false,
             lastSeen: item.lastSeen || now,
+            _clearedBy: item._clearedBy || "bucket-miss",
+            _clearedAt: item._clearedAt || now,
           };
         }
       }
@@ -1975,14 +2002,29 @@
     }
 
     function hasNewMessageAlert(tr) {
-      const a = tr.querySelector("a.button.table-option.alert");
-      if (a) return true;
+      if (!tr) return false;
 
-      const a2 = tr.querySelector(
-        'a.button.table-option[title*="nowa wiadomo"]',
+      // 1) Основний, перевірений маркер:
+      // title типу: "Szczegóły (nowa wiadomość w komunikatorze)"
+      const detailEl = tr.querySelector(
+        'a.button.table-option[title*="Szczegóły"]',
       );
-      return !!a2;
+
+      if (detailEl) {
+        const title = detailEl.getAttribute("title") || "";
+        if (/nowa\s+wiadomo/i.test(title)) {
+          return true;
+        }
+      }
+
+      // 2) Фолбек: якщо Arval раптом змінить текст,
+      // але збереже явний alert-клас (старий механізм)
+      const legacyAlert = tr.querySelector("a.button.table-option.alert");
+      if (legacyAlert) return true;
+
+      return false;
     }
+
     // NOTE: using global toAbsUrl from UTILS
 
     function buildListUrl({ page, closed }) {
@@ -2028,26 +2070,41 @@
       }
     }
 
-    async function scanOneMode({ closed }) {
-      const results = [];
-      const seen = new Set();
+    function findColIdxByHeaderRegex(table, re) {
+      const ths = Array.from(table.querySelectorAll("thead th"));
+      for (let i = 0; i < ths.length; i++) {
+        const txt = (ths[i].textContent || "").replace(/\s+/g, " ").trim();
+        if (re.test(txt)) return i;
+      }
+      return null;
+    }
 
+    async function scanOneMode({ closed }) {
+      const resultsByKey = new Map();
       const bucket = closed ? "closed" : "open";
 
       let page = 1;
       let maxPage = 1;
 
+      let consultantFromTopBar = null;
+
       for (let guard = 0; guard < CFG_TS.maxPagesHardLimit; guard++) {
         const url = buildListUrl({ page, closed });
-        if (page === 1) {
+        if (page === 1)
           console.log("[ToastScanner] LIST URL:", url, "closedMode=", closed);
-        }
 
         const doc = await fetchDoc(url);
         if (!doc) break;
 
         if (page === 1) {
           maxPage = parseMaxPageFromDoc(doc);
+        }
+
+        if (!consultantFromTopBar) {
+          consultantFromTopBar =
+            // extractConsultantFromDoc?.(doc) ||
+            // parseConsultantFromDoc?.(doc) ||
+            null;
         }
 
         setBadge(`Scanning… ${bucket} p${page}/${maxPage}`);
@@ -2061,41 +2118,74 @@
         );
         if (!rows.length) break;
 
+        let consIdx = idx.pracownik ?? idx.pracW ?? idx.prac ?? null;
+        if (consIdx == null)
+          consIdx = findColIdxByHeaderRegex(table, /pracownik/i);
+        if (consIdx == null)
+          consIdx = findColIdxByHeaderRegex(table, /konsultant/i);
+
+        if (CFG_TS.debug && page === 1) {
+          const headers = Array.from(table.querySelectorAll("thead th"))
+            .map(
+              (th, i) =>
+                `${i}:${(th.textContent || "").replace(/\s+/g, " ").trim()}`,
+            )
+            .join(" | ");
+          console.log("[TS] headers:", headers);
+          console.log("[TS] consIdx:", consIdx);
+        }
+
         for (const tr of rows) {
           if (!hasNewMessageAlert(tr)) continue;
 
           const tds = Array.from(tr.querySelectorAll("td"));
 
-          // --- plate ---
           const plateCell = idx.nrRej != null ? tds[idx.nrRej] : tds[3];
           const plate =
             (plateCell?.querySelector?.("span")?.textContent || "").trim() ||
             extractPlateFromCellText(plateCell?.textContent || "") ||
             "—";
 
-          // --- consultant ---
-          const consCell =
-            idx.pracW != null ? tds[idx.pracW] : tds[tds.length - 2];
-          const consultantRaw = (consCell?.textContent || "")
+          // consultant from row (prefer), fallback to topbar, then —
+          let consIdx = idx.pracownik ?? idx.pracW ?? idx.prac ?? null;
+
+          // ✅ якщо headerIndexMap не дав індекс — шукаємо по заголовку
+          if (consIdx == null) {
+            consIdx = findColIdxByHeaderRegex(table, /pracownik/i);
+          }
+
+          // (опційно) якщо у вас інколи ця колонка називається інакше:
+          if (consIdx == null) {
+            consIdx = findColIdxByHeaderRegex(table, /konsultant/i);
+          }
+
+          const consCell = consIdx != null ? tds[consIdx] : null;
+          const rowConsultant = (consCell?.textContent || "")
             .replace(/\s+/g, " ")
             .trim();
-          const consultant = consultantRaw || "—";
 
-          // --- stage (Etap) ---
-          // якщо idx.stage не знайдено — буде "—" (і isClosed тоді false)
+          if (CFG_TS.debug && page === 1) {
+            const headers = Array.from(table.querySelectorAll("thead th"))
+              .map(
+                (th, i) =>
+                  `${i}:${(th.textContent || "").replace(/\s+/g, " ").trim()}`,
+              )
+              .join(" | ");
+            console.log("[TS] headers:", headers);
+            console.log("[TS] consIdx:", consIdx);
+          }
+
           const stageCell = idx.stage != null ? tds[idx.stage] : null;
           const stageRaw = (stageCell?.textContent || "")
             .replace(/\s+/g, " ")
             .trim();
           const stage = stageRaw || "—";
 
-          // ✅ істина про “закрита/відкрита” тільки з Etap
           const isClosedByStage =
             /zamkni|zamknię|zlecenie\s+zamkni|zlecenie\s+zamknię/i.test(
               stageRaw || "",
             );
 
-          // --- caseId (KEY!) ---
           const caseId =
             String(
               tr.querySelector(".js_refreshAlert")?.getAttribute("rel") || "",
@@ -2110,31 +2200,39 @@
 
           const key = caseId;
 
-          // --- openUrl ---
           let openUrl = extractOpenUrlFromRow(tr);
-          if (!openUrl) {
+          if (!openUrl)
             openUrl = toAbsUrl(
               `/claims/insurancecase/info/page/${page}/id/${caseId}`,
             );
-          }
 
-          if (!seen.has(key)) {
-            seen.add(key);
-            results.push({
+          const existing = resultsByKey.get(key);
+
+          if (!existing) {
+            resultsByKey.set(key, {
               key,
               caseId,
               plate,
-              consultant,
+              consultant: rowConsultant || consultantFromTopBar || "—",
               stage,
               openUrl,
-
-              // ✅ нова модель
-              bucket, // технічне: звідки бачили
-              isClosed: isClosedByStage, // істина: тільки з Etap
-
-              // (опційно) для дебагу можна лишити:
-              // listClosed: !!closed,
+              bucket,
+              isClosed: isClosedByStage,
+              occurrences: 1,
+              seenIn: [{ bucket, page }],
             });
+          } else {
+            existing.occurrences = (existing.occurrences || 1) + 1;
+            existing.seenIn = existing.seenIn || [];
+            existing.seenIn.push({ bucket, page });
+
+            // якщо перший запис мав "—", а зараз знайшли ім'я — оновимо
+            if (
+              (!existing.consultant || existing.consultant === "—") &&
+              rowConsultant
+            ) {
+              existing.consultant = rowConsultant;
+            }
           }
         }
 
@@ -2143,7 +2241,7 @@
         await sleep(CFG_TS.requestDelayMs);
       }
 
-      return results;
+      return Array.from(resultsByKey.values());
     }
 
     // helper (додай нижче, якщо в тебе такого ще нема)
