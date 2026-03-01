@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         Arval Stealth — unified (menu hide + contract end dates)
 // @namespace    https://github.com/Phill1983/Arval-Stealth-user-script
-// @version      4.2.4
+// @version      4.2.5
 // @description  Automatyzacja roboty z Arval
 // @author       Phill_Mass
 // @match        https://serwisarval.pl/claims/insurancecase*
+// @match        https://system.serviceflow.pl/dmg_case/management/view/*
+// @match        https://system.serviceflow.pl/dmg_cases/rents*
 // @connect      serwisarval.pl
+// @connect      system.serviceflow.pl
 // @run-at       document-start
 // @grant        none
 // @homepageURL  https://github.com/Phill1983/Arval-Stealth-user-script
@@ -1237,6 +1240,38 @@
       });
 
       footer.appendChild(btn);
+
+      // авто-клік «Auto-archiwizacja» після переходу в справу (з картки або зі списку)
+      if (!window.__arvAutoArchiveAlreadyTriggered) {
+        const caseId = getCaseId(modal);
+        const fromStorage = (() => {
+          try {
+            return sessionStorage.getItem("arv_auto_archive_case");
+          } catch (e) {
+            return null;
+          }
+        })();
+        const fromUrl = (() => {
+          try {
+            return new URL(location.href).searchParams.get("arv_auto_archive");
+          } catch (e) {
+            return null;
+          }
+        })();
+        if ((fromStorage && fromStorage === caseId) || fromUrl) {
+          window.__arvAutoArchiveAlreadyTriggered = true;
+          try {
+            sessionStorage.removeItem("arv_auto_archive_case");
+          } catch (e) {}
+          try {
+            const u = new URL(location.href);
+            u.searchParams.delete("arv_auto_archive");
+            history.replaceState(null, "", u.toString());
+          } catch (e) {}
+          setTimeout(() => btn.click(), 800);
+        }
+      }
+
       console.log("%c[Arval Stealth] Кнопка вставлена", "color:lime");
     }
 
@@ -1394,8 +1429,7 @@
   const ToastScanner = (() => {
     let autoTimer = null;
     let isScanning = false;
-    let nextOpenAt = 0;
-    let nextClosedAt = 0;
+    let nextScanAt = 0;
 
     const LS_KEY = "arv_toast_scanner_settings_v1";
     const LS_ALERTS = "arv_toast_alerts_v1";
@@ -1405,21 +1439,18 @@
     const SCAN_COOLDOWN_MS = 10 * 60 * 1000;
 
     const CFG_TS = {
+      mode: "inbox", // 'inbox' | list (open+closed)
       baseListUrl:
         "https://serwisarval.pl/claims/insurancecase/index/page/1?claim_number=&contract_plate_number=&claim_number_insurance_company=&client_name=&claim_date_from=&claim_date_to=&type=&case_closed=0&special_care=&gaps_filled=&resetFilterForm=Kasuj+wszystkie+filtry",
 
-      scanClosedToo: true,
       requestDelayMs: 250,
 
-      // UI
       panelWidthPx: 350,
       panelHeightVh: 50,
-
       maxPagesHardLimit: 300,
 
       autoScanEnabled: true,
-      openEveryMin: 10,
-      closedEveryMin: 360,
+      scanEveryMin: 10, // один інтервал: кожні N хв скануємо ВСІ справи (open + closed)
       jitterMs: 15000,
     };
 
@@ -1431,6 +1462,62 @@
     };
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    // INBOX helper: parse a <tr> into { plate, consultant, stage }
+    // Works for both open/closed tables (3 or 4 buttons – does not matter)
+    function extractClaimRowDataFromTableRow(tr) {
+      try {
+        if (!tr) return {};
+        const table = tr.closest("table");
+        const tds = Array.from(tr.querySelectorAll("td"));
+        if (!table || !tds.length) return {};
+
+        // Reuse your existing helpers if present:
+        // - headerIndexMap(table)
+        // - findColIdxByHeaderRegex(table, regex)
+        // - extractPlateFromCellText(text)
+
+        const idx = headerIndexMap(table);
+
+        // Nr rej / Marka i model (usually col 3, but we also try idx map)
+        const plateCell = idx.nrRej != null ? tds[idx.nrRej] : tds[3];
+        const plate =
+          (plateCell?.querySelector?.("span")?.textContent || "").trim() ||
+          extractPlateFromCellText(plateCell?.textContent || "") ||
+          "—";
+
+        // Etap
+        const stageCell = idx.stage != null ? tds[idx.stage] : null;
+        const stage =
+          (stageCell?.textContent || "").replace(/\s+/g, " ").trim() || "—";
+
+        // Prefer "Pracownik warsztatu" (СТО), fallback "Pracownik Arval"
+        let consIdx =
+          idx.pracW ?? findColIdxByHeaderRegex(table, /pracownik\s+warsztatu/i);
+        if (consIdx == null)
+          consIdx = findColIdxByHeaderRegex(table, /pracownik\s+arval/i);
+        if (consIdx == null)
+          consIdx = findColIdxByHeaderRegex(table, /pracownik/i);
+
+        const consultantCell = consIdx != null ? tds[consIdx] : null;
+        const consultant =
+          (consultantCell?.textContent || "").replace(/\s+/g, " ").trim() ||
+          "—";
+
+        return { plate, consultant, stage };
+      } catch (e) {
+        console.warn(
+          "[ToastScanner] extractClaimRowDataFromTableRow failed:",
+          e,
+        );
+        return {};
+      }
+    }
+
+    // Backward-compat alias (IF your code uses makeAbsUrl somewhere)
+    function makeAbsUrl(href) {
+      return toAbsUrl(href);
+    }
 
     function ensureStylesOnce() {
       if (document.getElementById(TS_IDS.style)) return;
@@ -1619,11 +1706,12 @@
 
       const btn = toast.querySelector(".js-open-case");
       btn?.addEventListener("click", () => {
-        // ✅ миттєво прибираємо тост локально
         markCaseReadLocal(item?.caseId || item?.key, "toast-open");
 
         if (!openUrl) return;
-        window.open(openUrl, "_blank", "noopener,noreferrer");
+        const urlWithFlag =
+          openUrl + (openUrl.includes("?") ? "&" : "?") + "arv_auto_archive=1";
+        window.open(urlWithFlag, "_blank", "noopener,noreferrer");
       });
 
       panel.appendChild(toast);
@@ -1655,24 +1743,22 @@
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 90px;gap:8px;align-items:center;">
-        <div>Open interval (min)</div>
-        <input id="arv-as-open" type="number" min="1" max="120" style="width:90px;" />
-
-        <div>Closed interval (min)</div>
-        <input id="arv-as-closed" type="number" min="30" max="10080" style="width:90px;" />
+        <div>Interval (min)</div>
+        <input id="arv-as-interval" type="number" min="1" max="120" style="width:90px;" />
         </div>
 
-        <div style="display:flex;gap:8px;margin-top:10px;">
+        <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
         <button id="arv-as-apply" type="button" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(0,0,0,.14);background:#f5f5f5;cursor:pointer;font-weight:600;">
             Apply
         </button>
-        <button id="arv-as-scan-open" type="button" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(0,0,0,.14);background:#f5f5f5;cursor:pointer;font-weight:600;">
-            Scan open now
+        <button id="arv-as-scan-now" type="button" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(0,0,0,.14);background:#f5f5f5;cursor:pointer;font-weight:600;">
+            Scan now
         </button>
+        <span id="arv-toast-scan-badge" style="margin-left:8px;"></span>
         </div>
 
         <div style="margin-top:8px;opacity:.75;font-size:12px;">
-        Tip: closed 360 = 6h, 1440 = 24h
+        AUTO: кожні N хв скануємо всі справи (open + closed). Apply зберігає налаштування.
         </div>`;
 
       // ✅ ВСТАВЛЯЄМО ПІД ПАНЕЛЬ ТОСТІВ
@@ -1693,29 +1779,22 @@
         document.body.appendChild(box);
       }
 
-      // init values
       const elEnabled = box.querySelector("#arv-as-enabled");
-      const elOpen = box.querySelector("#arv-as-open");
-      const elClosed = box.querySelector("#arv-as-closed");
+      const elInterval = box.querySelector("#arv-as-interval");
 
       elEnabled.checked = !!CFG_TS.autoScanEnabled;
-      elOpen.value = String(CFG_TS.openEveryMin);
-      elClosed.value = String(CFG_TS.closedEveryMin);
+      elInterval.value = String(CFG_TS.scanEveryMin);
 
       box.querySelector("#arv-as-apply").addEventListener("click", () => {
         CFG_TS.autoScanEnabled = elEnabled.checked;
-        CFG_TS.openEveryMin = clamp(elOpen.value, 1, 120);
-        CFG_TS.closedEveryMin = clamp(elClosed.value, 30, 10080);
-
+        CFG_TS.scanEveryMin = clamp(elInterval.value, 1, 120);
         saveSettings();
-        nextOpenAt = 0;
-        nextClosedAt = 0;
-
+        nextScanAt = 0;
         setBadge(`Auto: ${CFG_TS.autoScanEnabled ? "ON" : "OFF"}`);
       });
 
-      box.querySelector("#arv-as-scan-open").addEventListener("click", () => {
-        runScan({ mode: "open", force: true });
+      box.querySelector("#arv-as-scan-now").addEventListener("click", () => {
+        runScan({ mode: "both", force: true });
       });
     }
     // NOTE: using global escapeHtml/escapeAttr from UTILS
@@ -1731,10 +1810,11 @@
 
         if (typeof s.autoScanEnabled === "boolean")
           CFG_TS.autoScanEnabled = s.autoScanEnabled;
-        if (Number.isFinite(s.openEveryMin))
-          CFG_TS.openEveryMin = clamp(s.openEveryMin, 1, 120);
-        if (Number.isFinite(s.closedEveryMin))
-          CFG_TS.closedEveryMin = clamp(s.closedEveryMin, 30, 10080);
+        if (Number.isFinite(s.scanEveryMin)) {
+          CFG_TS.scanEveryMin = clamp(s.scanEveryMin, 1, 120);
+        } else if (Number.isFinite(s.openEveryMin)) {
+          CFG_TS.scanEveryMin = clamp(s.openEveryMin, 1, 120);
+        }
       } catch {}
     }
 
@@ -1744,8 +1824,7 @@
           LS_KEY,
           JSON.stringify({
             autoScanEnabled: CFG_TS.autoScanEnabled,
-            openEveryMin: CFG_TS.openEveryMin,
-            closedEveryMin: CFG_TS.closedEveryMin,
+            scanEveryMin: CFG_TS.scanEveryMin,
           }),
         );
       } catch {}
@@ -1793,12 +1872,17 @@
       clearPanel();
       setPanelVisible(true);
 
-      // можеш сортувати за lastSeen (нові зверху)
-      items.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+      // порядок як у списку справ: перша з алертом — зверху стовпчика карток
+      items.sort((a, b) => {
+        const oa = typeof a.listOrder === "number" ? a.listOrder : 1e9;
+        const ob = typeof b.listOrder === "number" ? b.listOrder : 1e9;
+        if (oa !== ob) return oa - ob;
+        return (b.lastSeen || 0) - (a.lastSeen || 0);
+      });
 
       for (const item of items) addToast(item);
 
-      setBadge(`${items.length} alerts (cache)`);
+      setBadge(`${items.length} alerts`);
     }
 
     // =========================
@@ -1829,6 +1913,24 @@
       }
     }
 
+    /** Чи зараз відкрита сторінка списку справ (не деталі справи) */
+    function isListPageUrl() {
+      try {
+        const p = (location.pathname || "").toLowerCase();
+        if (!p.includes("/claims/insurancecase")) return false;
+        if (
+          /\/info\/|\/chat\/|\/details\/|\/proceed\/|\/assign\/|\/assignserviceuser\//i.test(
+            p,
+          )
+        )
+          return false;
+        if (/\/insurancecase\/\d+/.test(p)) return false;
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
     function markCaseReadLocal(caseId, reason = "unknown") {
       const id = String(caseId || "").trim();
       if (!id) return false;
@@ -1837,18 +1939,17 @@
       const item = state[id];
       if (!item) return false;
 
-      // якщо і так inactive — просто не шумимо
-      if (item.active === false) return true;
-
-      state[id] = {
-        ...item,
-        active: false,
-        lastSeen: Date.now(),
-        _clearedBy: reason, // debug-поле (не обовʼязково, але корисно)
-      };
-
+      // видаляємо ключ з LS (прочитано = картка більше не показується)
+      delete state[id];
       saveAlertsState(state);
       renderFromStorage();
+
+      // прапорець для авто-кліку кнопки архівації на сторінці справи (відкрито зі списку / зміна URL)
+      if (reason === "manual-click" || reason === "url-change") {
+        try {
+          sessionStorage.setItem("arv_auto_archive_case", id);
+        } catch (e) {}
+      }
       return true;
     }
 
@@ -1869,8 +1970,10 @@
         (all || []).map((x) => String(x?.key || "").trim()).filter(Boolean),
       );
 
-      // 1) Апдейт того, що ми знайшли зараз
-      for (const x of all || []) {
+      // 1) Апдейт того, що ми знайшли зараз (порядок = порядок у списку справ зверху вниз)
+      const list = Array.isArray(all) ? all : [];
+      for (let i = 0; i < list.length; i++) {
+        const x = list[i];
         const key = String(x?.key || "").trim();
         if (!key) continue;
 
@@ -1906,6 +2009,9 @@
           bucket, // технічне: де бачили
           isClosed, // істина: тільки з Etap
 
+          // ✅ порядок як у списку справ (перша з алертом = зверху стовпчика карток)
+          listOrder: i,
+
           // ✅ нове: анти-дубль та спостережуваність
           occurrences,
           seenIn,
@@ -1936,6 +2042,85 @@
             _clearedBy: item._clearedBy || "bucket-miss",
             _clearedAt: item._clearedAt || now,
           };
+        }
+      }
+
+      saveAlertsState(next);
+    }
+
+    // =========================
+    // INBOX SCAN MERGE (title-based unread)
+    // =========================
+    function mergeInboxResultsToStorage(unreadRows, opts = {}) {
+      const now = Date.now();
+      const pruneOthers = opts.pruneOthers !== false; // default true
+
+      const prev = loadAlertsState();
+      const next = { ...prev };
+
+      const keysNow = new Set(
+        (unreadRows || [])
+          .map((x) => String(x?.caseId || x?.key || "").trim())
+          .filter(Boolean),
+      );
+
+      const rows = Array.isArray(unreadRows) ? unreadRows : [];
+      for (let i = 0; i < rows.length; i++) {
+        const x = rows[i];
+        const key = String(x?.caseId || x?.key || "").trim();
+        if (!key) continue;
+        const prevItem = prev[key];
+
+        next[key] = {
+          key,
+          caseId: key,
+          plate: x.plate || prevItem?.plate || "—",
+          consultant: x.consultant || prevItem?.consultant || "—",
+          stage: x.stage || prevItem?.stage || "—",
+          openUrl: x.openUrl || prevItem?.openUrl || x.href || null,
+          bucket: "notif",
+          isClosed: prevItem?.isClosed === true ? true : !!x.isClosed,
+          occurrences: 1,
+          seenIn: ["inbox"],
+          listOrder: i,
+          active: true,
+          lastSeen: now,
+          _clearedBy: undefined,
+          _clearedAt: undefined,
+        };
+      }
+
+      for (const k of Object.keys(next)) {
+        const it = next[k];
+        if (!it) continue;
+        if (
+          it.bucket === "notif" &&
+          it.active === true &&
+          !keysNow.has(String(k))
+        ) {
+          next[k] = {
+            ...it,
+            active: false,
+            lastSeen: it.lastSeen || now,
+            _clearedBy: it._clearedBy || "notif-miss",
+            _clearedAt: it._clearedAt || now,
+          };
+        }
+      }
+
+      if (pruneOthers) {
+        for (const k of Object.keys(next)) {
+          const it = next[k];
+          if (!it) continue;
+          if (it.bucket !== "notif" && it.active === true) {
+            next[k] = {
+              ...it,
+              active: false,
+              lastSeen: it.lastSeen || now,
+              _clearedBy: it._clearedBy || "inbox-mode-prune",
+              _clearedAt: it._clearedAt || now,
+            };
+          }
         }
       }
 
@@ -2001,24 +2186,27 @@
       return aAny ? toAbsUrl(aAny.getAttribute("href")) : null;
     }
 
+    // Одна перевірка для обох режимів (scanOneMode + scanInboxMode)
+    function titleIndicatesNewMessage(title) {
+      return /nowa\s+wiadomo/i.test(String(title || ""));
+    }
+
     function hasNewMessageAlert(tr) {
       if (!tr) return false;
 
-      // 1) Основний, перевірений маркер:
-      // title типу: "Szczegóły (nowa wiadomość w komunikatorze)"
+      // 1) Основний маркер: title типу "Szczegóły (nowa wiadomość w komunikatorze)"
       const detailEl = tr.querySelector(
         'a.button.table-option[title*="Szczegóły"]',
       );
 
-      if (detailEl) {
-        const title = detailEl.getAttribute("title") || "";
-        if (/nowa\s+wiadomo/i.test(title)) {
-          return true;
-        }
+      if (
+        detailEl &&
+        titleIndicatesNewMessage(detailEl.getAttribute("title"))
+      ) {
+        return true;
       }
 
-      // 2) Фолбек: якщо Arval раптом змінить текст,
-      // але збереже явний alert-клас (старий механізм)
+      // 2) Фолбек: alert-клас (старий механізм)
       const legacyAlert = tr.querySelector("a.button.table-option.alert");
       if (legacyAlert) return true;
 
@@ -2034,14 +2222,32 @@
       return u.toString();
     }
 
-    function parseMaxPageFromDoc(doc) {
-      const links = Array.from(
-        doc.querySelectorAll('a[href*="/claims/insurancecase/index/page/"]'),
+    function buildInboxUrl({ page }) {
+      let base;
+      try {
+        base = new URL(location.href);
+      } catch {
+        base = new URL(CFG_TS.baseListUrl);
+      }
+
+      const mm = base.pathname.match(
+        /^(.*\/claims\/insurancecase\/index)\/page\/\d+/i,
       );
+      if (mm) base.pathname = `${mm[1]}/page/${page}`;
+      else base.pathname = `/claims/insurancecase/index/page/${page}`;
+
+      base.searchParams.set("case_closed", "");
+      return base.toString();
+    }
+
+    function parseMaxPageFromDoc(doc) {
       let max = 1;
+      const selector =
+        'a[href*="/claims/insurancecase/index/page/"], a[href*="/insurancecase/"][href*="/page/"]';
+      const links = Array.from(doc.querySelectorAll(selector));
       for (const a of links) {
         const href = a.getAttribute("href") || "";
-        const m = href.match(/\/page\/(\d+)/);
+        const m = href.match(/\/page\/(\d+)(?:[/?#]|$)/);
         if (m) max = Math.max(max, Number(m[1]));
       }
       return max || 1;
@@ -2079,6 +2285,60 @@
       return null;
     }
 
+    // =========================
+    // INBOX MODE: scan ALL claims pages and detect unread via title
+    // "Szczegóły (nowa wiadomość w komunikatorze)"
+    // =========================
+    async function scanInboxMode() {
+      const results = [];
+      let page = 1;
+      let maxPage = 1;
+
+      for (let guard = 0; guard < CFG_TS.maxPagesHardLimit; guard++) {
+        const url = buildInboxUrl({ page });
+        const doc = await fetchDoc(url);
+        if (!doc) break;
+
+        // Оновлюємо maxPage на кожній сторінці: на п.1 часто є лише "1 2", без посилання на 3+
+        maxPage = Math.max(maxPage, parseMaxPageFromDoc(doc));
+        setBadge(`Scanning… inbox p${page}/${maxPage}`);
+
+        const table = findClaimsListTableInDoc(doc);
+        if (!table) break;
+
+        for (const row of Array.from(table.querySelectorAll("tbody tr"))) {
+          const details = row.querySelector('a[title*="Szczegóły"]');
+          if (!details) continue;
+
+          const title = details.getAttribute("title") || "";
+          if (!titleIndicatesNewMessage(title)) continue;
+
+          const href = details.getAttribute("href") || "";
+          const caseId = extractCaseIdFromHref(href);
+          if (!caseId) continue;
+
+          const parsed = extractClaimRowDataFromTableRow(row) || {};
+
+          results.push({
+            key: String(caseId),
+            caseId: String(caseId),
+            plate: parsed.plate || "—",
+            consultant: parsed.consultant || "—",
+            stage: parsed.stage || "—",
+            openUrl: makeAbsUrl(href),
+            isClosed: /Zlecenie\s+zamknięte/i.test(parsed.stage || ""),
+            page,
+            title,
+          });
+        }
+
+        if (page >= maxPage) break;
+        page++;
+      }
+
+      return results;
+    }
+
     async function scanOneMode({ closed }) {
       const resultsByKey = new Map();
       const bucket = closed ? "closed" : "open";
@@ -2096,9 +2356,8 @@
         const doc = await fetchDoc(url);
         if (!doc) break;
 
-        if (page === 1) {
-          maxPage = parseMaxPageFromDoc(doc);
-        }
+        // Оновлюємо maxPage на кожній сторінці: на п.1 часто є лише "1 2", без посилання на 3+
+        maxPage = Math.max(maxPage, parseMaxPageFromDoc(doc));
 
         if (!consultantFromTopBar) {
           consultantFromTopBar =
@@ -2118,7 +2377,11 @@
         );
         if (!rows.length) break;
 
-        let consIdx = idx.pracownik ?? idx.pracW ?? idx.prac ?? null;
+        let consIdx = idx.pracW ?? idx.pracownik ?? idx.prac ?? null;
+        if (consIdx == null)
+          consIdx = findColIdxByHeaderRegex(table, /pracownik\s+warsztatu/i);
+        if (consIdx == null)
+          consIdx = findColIdxByHeaderRegex(table, /pracownik\s+arval/i);
         if (consIdx == null)
           consIdx = findColIdxByHeaderRegex(table, /pracownik/i);
         if (consIdx == null)
@@ -2146,18 +2409,16 @@
             extractPlateFromCellText(plateCell?.textContent || "") ||
             "—";
 
-          // consultant from row (prefer), fallback to topbar, then —
-          let consIdx = idx.pracownik ?? idx.pracW ?? idx.prac ?? null;
-
-          // ✅ якщо headerIndexMap не дав індекс — шукаємо по заголовку
-          if (consIdx == null) {
+          // consultant from row: Pracownik warsztatu (СТО), fallback Pracownik Arval
+          let consIdx = idx.pracW ?? idx.pracownik ?? idx.prac ?? null;
+          if (consIdx == null)
+            consIdx = findColIdxByHeaderRegex(table, /pracownik\s+warsztatu/i);
+          if (consIdx == null)
+            consIdx = findColIdxByHeaderRegex(table, /pracownik\s+arval/i);
+          if (consIdx == null)
             consIdx = findColIdxByHeaderRegex(table, /pracownik/i);
-          }
-
-          // (опційно) якщо у вас інколи ця колонка називається інакше:
-          if (consIdx == null) {
+          if (consIdx == null)
             consIdx = findColIdxByHeaderRegex(table, /konsultant/i);
-          }
 
           const consCell = consIdx != null ? tds[consIdx] : null;
           const rowConsultant = (consCell?.textContent || "")
@@ -2196,7 +2457,27 @@
             ).trim() ||
             String(extractCaseIdFromRow(tr) || "").trim();
 
-          if (!caseId) continue;
+          if (!caseId) {
+            // Рядок з алертом, але caseId не витягнуто — можлива причина пропуску справи
+            console.warn(
+              "[ToastScanner] Пропущено рядок з алертом (немає caseId):",
+              { plate, bucket, page },
+            );
+            if (CFG_TS.debug) {
+              console.warn("[ToastScanner] Деталі:", {
+                relAlert: tr
+                  .querySelector(".js_refreshAlert")
+                  ?.getAttribute("rel"),
+                relTasks: tr
+                  .querySelector(".js_openTasksDialog")
+                  ?.getAttribute("rel"),
+                hrefFromRow: tr
+                  .querySelector('a[href*="/id/"]')
+                  ?.getAttribute("href"),
+              });
+            }
+            continue;
+          }
 
           const key = caseId;
 
@@ -2260,9 +2541,24 @@
       return m ? m[1] : null;
     }
 
-    async function runScan({ mode = "both", force = false } = {}) {
+    /** Результати останнього скану для консолі: window.__arvLastScanResults (дочекайтесь завершення скану) */
+    function setLastScanResults(obj) {
+      try {
+        const v = obj;
+        if (typeof window !== "undefined") window.__arvLastScanResults = v;
+        if (typeof globalThis !== "undefined")
+          globalThis.__arvLastScanResults = v;
+      } catch (e) {}
+    }
+
+    async function runScan({
+      mode = "both",
+      force = false,
+      skipReloadCheck = false,
+    } = {}) {
       if (isScanning) return;
       isScanning = true;
+      setLastScanResults(null);
 
       ensureStylesOnce();
       ensurePanelOnce();
@@ -2281,25 +2577,83 @@
         if (!force && Date.now() - last < SCAN_COOLDOWN_MS) {
           hidePanelLoader();
           renderFromStorage();
+          setLastScanResults({
+            cooldown: true,
+            message: "Scan skipped (cooldown)",
+          });
           return;
+        }
+
+        // ✅ Варіант A: reload тільки при АВТО-скані (force=false), щоб ручний і авто давали однаковий результат
+        if (
+          !skipReloadCheck &&
+          !force &&
+          !(CFG_TS.mode === "inbox" && mode === "inbox")
+        ) {
+          try {
+            if (
+              isListPageUrl() &&
+              !sessionStorage.getItem("arv_scan_after_reload")
+            ) {
+              sessionStorage.setItem("arv_scan_after_reload", "1");
+              setLastScanResults({ reloading: true });
+              location.reload();
+              return;
+            }
+          } catch (e) {}
         }
 
         setBadge("Scanning…");
 
         const all = [];
 
-        if (mode === "open" || mode === "both") {
-          const openRes = await scanOneMode({ closed: false });
-          all.push(...openRes);
+        if (CFG_TS.mode === "inbox" && mode === "inbox") {
+          const unread = await scanInboxMode();
+          mergeInboxResultsToStorage(unread, { pruneOthers: true });
+          hidePanelLoader();
+          renderFromStorage();
+          setBadge(
+            `Inbox done: ${new Set(unread.map((x) => x.caseId)).size} unread`,
+          );
+          setLastScanResults({
+            mode: "inbox",
+            all: unread,
+            byCaseId: (id) =>
+              unread.find((r) => String(r.caseId || r.key) === String(id)),
+            byPlate: (plate) =>
+              unread.filter((r) =>
+                (r.plate || "")
+                  .toLowerCase()
+                  .includes(String(plate).toLowerCase()),
+              ),
+          });
+          return;
         }
 
-        if (CFG_TS.scanClosedToo && (mode === "closed" || mode === "both")) {
-          const closedRes = await scanOneMode({ closed: true });
-          all.push(...closedRes);
-        }
+        // Єдина логіка: завжди скануємо ВСІ справи (open + closed)
+        const openRes = await scanOneMode({ closed: false });
+        const closedRes = await scanOneMode({ closed: true });
+        all.push(...openRes, ...closedRes);
 
-        // ✅ пишемо результат скану в localStorage (і цим же прибираємо зниклі)
-        mergeScanResultsToStorage(all, mode);
+        // Дебаг у консолі: дочекайтесь завершення скану (зникне "Scanning…"), потім:
+        //   window.__arvLastScanResults.byCaseId("225340132")  — чи потрапила справа в скан
+        //   window.__arvLastScanResults.byPlate("WZ448AU")     — усі справи з цим ДНЗ
+        //   window.__arvLastScanResults.all.map(r => ({ caseId: r.caseId, plate: r.plate }))
+        setLastScanResults({
+          open: openRes,
+          closed: closedRes,
+          all: [...all],
+          byCaseId: (id) =>
+            all.find((r) => String(r.caseId || r.key) === String(id)),
+          byPlate: (plate) =>
+            all.filter((r) =>
+              (r.plate || "")
+                .toLowerCase()
+                .includes(String(plate).toLowerCase()),
+            ),
+        });
+
+        mergeScanResultsToStorage(all, "both");
 
         // ✅ рендеримо ТІЛЬКИ з localStorage (швидко, стабільно)
         hidePanelLoader();
@@ -2336,26 +2690,17 @@
       if (!CFG_TS.autoScanEnabled) return;
 
       const now = Date.now();
-      if (!nextOpenAt) nextOpenAt = now + CFG_TS.openEveryMin * 60_000;
-      if (!nextClosedAt) nextClosedAt = now + CFG_TS.closedEveryMin * 60_000;
+      if (!nextScanAt) nextScanAt = now + CFG_TS.scanEveryMin * 60_000;
 
-      if (now >= nextOpenAt) {
-        await runScan({ mode: "open" });
-        nextOpenAt = Date.now() + CFG_TS.openEveryMin * 60_000;
-        return;
-      }
-
-      if (CFG_TS.scanClosedToo && now >= nextClosedAt) {
-        await runScan({ mode: "closed" });
-        nextClosedAt = Date.now() + CFG_TS.closedEveryMin * 60_000;
-        return;
+      if (now >= nextScanAt) {
+        await runScan({ mode: "both" });
+        nextScanAt = Date.now() + CFG_TS.scanEveryMin * 60_000;
       }
     }
 
     function startAuto() {
       loadSettings();
-      if (!nextOpenAt) nextOpenAt = 0;
-      if (!nextClosedAt) nextClosedAt = 0;
+      nextScanAt = 0;
       scheduleNextTick();
     }
 
@@ -2365,40 +2710,24 @@
     }
 
     function ensureScanButton() {
+      // Кнопка «Scan: nowe wiadomości» прибрана; скан тільки кнопкою «Scan now» в блоці налаштувань.
+      // Badge (статус) створюється в ensureSettingsBox; тут лише прибираємо стару кнопку з toolbar, якщо була.
+      const oldBtn = document.getElementById(TS_IDS.btn);
+      if (oldBtn) oldBtn.remove();
+      const badge = document.getElementById(TS_IDS.badge);
+      if (badge) return;
       const toolbar = document.getElementById("arv-toolbar");
-
-      if (document.getElementById(TS_IDS.btn)) return;
-
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "arv-btn arv-btn--primary";
-      btn.id = TS_IDS.btn;
-      btn.textContent = "Scan: nowe wiadomości";
-
-      const badge = document.createElement("span");
-      badge.id = TS_IDS.badge;
-      badge.textContent = "";
-      badge.style.marginLeft = "8px";
-
-      btn.addEventListener("click", () =>
-        runScan({ mode: "both", force: true }).catch(console.error),
-      );
-
-      if (toolbar) {
-        toolbar.appendChild(btn);
-        toolbar.appendChild(badge);
-      } else {
-        btn.style.position = "fixed";
-        btn.style.top = "12px";
-        btn.style.left = "60px";
-        btn.style.zIndex = "999999";
-        document.body.appendChild(btn);
-
-        badge.style.position = "fixed";
-        badge.style.top = "18px";
-        badge.style.left = "260px";
-        badge.style.zIndex = "999999";
-        document.body.appendChild(badge);
+      const span = document.createElement("span");
+      span.id = TS_IDS.badge;
+      span.textContent = "";
+      span.style.marginLeft = "8px";
+      if (toolbar) toolbar.appendChild(span);
+      else {
+        span.style.position = "fixed";
+        span.style.top = "18px";
+        span.style.left = "60px";
+        span.style.zIndex = "999999";
+        document.body.appendChild(span);
       }
     }
 
@@ -2473,24 +2802,52 @@
           doc.querySelector(
             '[class^="ckf-"], [class*=" ckf-"], .ckf, #ckf, #ckfinder',
           )
-        ) {
+        )
           return true;
-        }
 
         return false;
       }
 
-      // ✅ ВАЖЛИВО: виходимо одразу
       if (isCkFinderWindow()) return;
 
       if (window.__arvToastScannerInited) return;
       window.__arvToastScannerInited = true;
 
+      // Після reload для скану: прапорець вже встановлено перед reload, тепер запускаємо скан
+      try {
+        if (sessionStorage.getItem("arv_scan_after_reload")) {
+          sessionStorage.removeItem("arv_scan_after_reload");
+          ensureStylesOnce();
+          ensurePanelOnce();
+          loadSettings();
+          ensureSettingsBox();
+          const toolbar = document.getElementById("arv-toolbar");
+          if (toolbar) ensureScanButton();
+          else {
+            document.getElementById(TS_IDS.btn)?.remove();
+            document.getElementById(TS_IDS.badge)?.remove();
+          }
+          hookManualOpenClicksOnce();
+          hookUrlCaseDetectionOnce();
+          renderFromStorage();
+          startAuto();
+          runScan({ mode: "both", force: true, skipReloadCheck: true });
+          return;
+        }
+      } catch (e) {}
+
       ensureStylesOnce();
       ensurePanelOnce();
-      ensureScanButton();
       loadSettings();
       ensureSettingsBox();
+
+      const toolbar = document.getElementById("arv-toolbar");
+      if (!toolbar) {
+        document.getElementById(TS_IDS.btn)?.remove();
+        document.getElementById(TS_IDS.badge)?.remove();
+      } else {
+        ensureScanButton();
+      }
 
       hookManualOpenClicksOnce();
       hookUrlCaseDetectionOnce();
@@ -2504,28 +2861,841 @@
   })();
 
   /***************************************************************************
+   * SF Urgency Guard (ServiceFlow: system.serviceflow.pl)
+   ***************************************************************************/
+  const SFGuard = (() => {
+    const HOST = "system.serviceflow.pl";
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const VIEW_ID_RE = /\/view\/(\d+)/;
+    const FLOW_CARD_TITLE = "DATA ZAKOŃCZENIA NAPRAWY";
+    const FLOW_WAIT_MS = 4500;
+    const IGNORE_URGENT_IF_SAMOLIKWIDACJA = true; // MVP: можна ігнорувати терміновість при самоліквідації
+    /** Паузи (мс) після "Tak" перед закриттям модалки і перед запуском друку. Зменш — менша затримка. */
+    const AFTER_TAK_DELAY_MS = 150;
+    const AFTER_MODAL_CLOSE_DELAY_MS = 150;
+
+    let bypassGuardOnce = false;
+    /** Збережений стан чекбоксів модалки друку (для bulk після закриття модалки дати/терміновості). */
+    let savedBulkPrintState = null;
+
+    function getCaseId() {
+      const m = location.pathname.match(VIEW_ID_RE);
+      if (m) return m[1];
+      const segs = location.pathname.split("/").filter(Boolean);
+      return segs.length ? segs[segs.length - 1] : null;
+    }
+
+    function getRepairEndDateSync() {
+      const cards = $$(".sb-title");
+      for (const titleEl of cards) {
+        if (!titleEl?.textContent?.includes(FLOW_CARD_TITLE)) continue;
+        const card =
+          titleEl.closest(".card") ||
+          titleEl.closest('[class*="card"]') ||
+          titleEl.parentElement;
+        if (!card) continue;
+        const valueEl =
+          card.querySelector(".sb-text .text-bold") ||
+          card.querySelector(".gray.text-bold.margin-t5");
+        const raw = valueEl ? String(valueEl.textContent || "").trim() : "—";
+        return raw === "—" ? null : raw;
+      }
+      return null;
+    }
+
+    function waitForFlowCard() {
+      return new Promise((resolve) => {
+        const titleEl = [...$$(".sb-title")].find((el) =>
+          el.textContent?.includes(FLOW_CARD_TITLE),
+        );
+        if (titleEl) {
+          resolve(getRepairEndDateSync());
+          return;
+        }
+        const deadline = Date.now() + FLOW_WAIT_MS;
+        const observer = new MutationObserver(() => {
+          if (Date.now() > deadline) {
+            observer.disconnect();
+            resolve(getRepairEndDateSync());
+            return;
+          }
+          const card = [...$$(".sb-title")].find((el) =>
+            el.textContent?.includes(FLOW_CARD_TITLE),
+          );
+          if (card) {
+            observer.disconnect();
+            resolve(getRepairEndDateSync());
+          }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(() => {
+          observer.disconnect();
+          resolve(getRepairEndDateSync());
+        }, FLOW_WAIT_MS);
+      });
+    }
+
+    async function getRepairEndDate() {
+      const hash = location.hash || "#main_data";
+      if (hash !== "#flow") {
+        location.hash = "#flow";
+        return waitForFlowCard();
+      }
+      return Promise.resolve(getRepairEndDateSync());
+    }
+
+    function repairEndDateValid(dateStr) {
+      return (
+        typeof dateStr === "string" &&
+        dateStr !== "—" &&
+        DATE_RE.test(dateStr.trim())
+      );
+    }
+
+    function findUrgentButton() {
+      const span = document.querySelector(
+        ".case-actions span.glyphicon.fire, .btn-flow-status span.glyphicon.fire",
+      );
+      return span?.closest("button") || null;
+    }
+
+    function getUrgentNoAccessReason() {
+      const btn = findUrgentButton();
+      if (!btn) return null;
+      const t = (
+        btn.getAttribute("data-original-title") ||
+        btn.getAttribute("title") ||
+        ""
+      ).toLowerCase();
+      if (t.includes("brak dostępu") || /tryb pilny.*brak dostępu/i.test(t))
+        return "brak dostępu";
+      return null;
+    }
+
+    /** Терміновість увімкнена тільки якщо в шапці справи є вогник (.case-main-statuses), не за класами кнопки. */
+    function isUrgentActive() {
+      const headerFire = document.querySelector(
+        ".case-main-statuses .glyphicon.fire",
+      );
+      return Boolean(headerFire);
+    }
+
+    function isSelfSettlement() {
+      if (!IGNORE_URGENT_IF_SAMOLIKWIDACJA) return false;
+      const titles = $$(".sb-title");
+      for (const t of titles) {
+        if (!t?.textContent?.includes("OPIS USZKODZEŃ")) continue;
+        const card =
+          t.closest(".card") || t.closest('[class*="card"]') || t.parentElement;
+        if (!card) continue;
+        const textEl = card.querySelector(".sb-text");
+        const text = textEl ? String(textEl.textContent || "") : "";
+        if (/samolikwidacja/i.test(text)) return true;
+      }
+      return false;
+    }
+
+    /** Заглушка: майбутня перевірка по rents. Повертає null (unknown). */
+    function shouldBeUrgentByRent(caseNumber) {
+      return null;
+    }
+
+    function openPrintUrl(url) {
+      const abs = toAbsUrl(url);
+      if (abs) window.open(abs, "_blank", "noopener,noreferrer");
+    }
+
+    /** Чекає поки зникне модалка SF (.modal.in / .modal.show). Resolve(true) коли закрито, інакше після timeout. */
+    function waitForModalClose(timeoutMs) {
+      const deadline = Date.now() + (timeoutMs || 15000);
+      return new Promise((resolve) => {
+        function check() {
+          if (Date.now() > deadline) {
+            resolve(false);
+            return;
+          }
+          const openModal = document.querySelector(".modal.in, .modal.show");
+          if (!openModal) {
+            resolve(true);
+            return;
+          }
+          setTimeout(check, 150);
+        }
+        check();
+      });
+    }
+
+    /** Після збереження дати чекає, поки в картці #flow з'явиться валідна дата YYYY-MM-DD. */
+    async function waitForValidRepairDate(timeoutMs) {
+      const deadline = Date.now() + (timeoutMs || 20000);
+      while (Date.now() < deadline) {
+        const dateRaw = await getRepairEndDate();
+        if (repairEndDateValid(dateRaw)) return true;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      return false;
+    }
+
+    function isDateModal(modal) {
+      if (!modal) return false;
+      if (modal.querySelector(".print-documents-list")) return false;
+      const text = (modal.textContent || "").toLowerCase();
+      if (
+        text.includes("zakończenia naprawy") &&
+        !text.includes("dokumenty do wydruku")
+      )
+        return true;
+      if (
+        modal.querySelector(
+          'input[name*="repair_date"], input[id*="indicative_repair_date"]',
+        ) &&
+        !modal.querySelector(".print-documents-list")
+      )
+        return true;
+      return false;
+    }
+
+    function findDateModal() {
+      const modals = document.querySelectorAll(".modal.in, .modal.show");
+      for (const m of modals) {
+        if (isDateModal(m)) return m;
+      }
+      return null;
+    }
+
+    function getActivePrintList() {
+      const modals = document.querySelectorAll(".modal.in, .modal.show");
+      for (let i = modals.length - 1; i >= 0; i--) {
+        const list = modals[i].querySelector(".print-documents-list");
+        if (list) return list;
+      }
+      return null;
+    }
+
+    /** Чекає поки з’явиться модалка дати, потім поки вона закриється. */
+    function waitForDateModalClose(timeoutMs) {
+      const deadline = Date.now() + (timeoutMs || 120000);
+      const appearDeadline = Date.now() + 8000;
+      return new Promise((resolve) => {
+        function waitForAppear() {
+          if (Date.now() > appearDeadline) {
+            resolve(false);
+            return;
+          }
+          const dateModal = findDateModal();
+          if (dateModal) {
+            waitForClose();
+            return;
+          }
+          setTimeout(waitForAppear, 150);
+        }
+        function waitForClose() {
+          if (Date.now() > deadline) {
+            resolve(false);
+            return;
+          }
+          const dateModal = findDateModal();
+          if (!dateModal) {
+            resolve(true);
+            return;
+          }
+          const hasShow =
+            dateModal.classList.contains("show") ||
+            dateModal.classList.contains("in");
+          if (!hasShow || !document.body.contains(dateModal)) {
+            resolve(true);
+            return;
+          }
+          setTimeout(waitForClose, 150);
+        }
+        setTimeout(waitForAppear, 400);
+      });
+    }
+
+    /** Шукає в DOM кнопку "Zapisz" у відкритій модалці і чекає кліку по ній (або timeout). */
+    function waitForZapiszClick(timeoutMs) {
+      const maxWait = timeoutMs || 120000;
+      return new Promise((resolve) => {
+        let resolved = false;
+        const cleanup = () => {
+          document.removeEventListener("click", onClick, true);
+          if (timeoutId) clearTimeout(timeoutId);
+        };
+        const buttonText = (el) => {
+          const t = el.querySelector?.(".text")
+            ? el.querySelector(".text").textContent
+            : el.textContent || el.value || "";
+          return String(t).trim().toLowerCase();
+        };
+        const onClick = (e) => {
+          if (resolved) return;
+          const modal = findDateModal();
+          if (!modal) return;
+          const btn = e.target.closest(
+            "button, input[type=submit], a.btn, [role=button]",
+          );
+          if (!btn || !modal.contains(btn)) return;
+          const text = buttonText(btn);
+          if (!text || text.indexOf("zapisz") === -1) return;
+          resolved = true;
+          cleanup();
+          console.log("[SF Guard] Zapisz clicked in date modal");
+          resolve(true);
+        };
+        document.addEventListener("click", onClick, true);
+        const timeoutId = setTimeout(() => {
+          if (resolved) return;
+          resolved = true;
+          cleanup();
+          resolve(false);
+        }, maxWait);
+      });
+    }
+
+    /** Шукає кнопку підтвердження у модалці (Tak/Yes/OK) і клікає. Повертає Promise<boolean>. */
+    function waitForAndClickTakButton(maxMs) {
+      const deadline = Date.now() + (maxMs || 8000);
+      return new Promise((resolve) => {
+        function getVisibleModals() {
+          return Array.from(
+            document.querySelectorAll(".modal.in, .modal.show"),
+          );
+        }
+        function isConfirmLabel(text) {
+          const t = (text || "").trim().toLowerCase();
+          return (
+            t === "tak" ||
+            t.startsWith("tak ") ||
+            t === "yes" ||
+            t === "ok" ||
+            t === "potwierdź" ||
+            t === "potwierdz"
+          );
+        }
+        function findTakButton() {
+          const modals = getVisibleModals();
+          if (!modals.length) return null;
+          // Спочатку шукаємо в останній (верхній) модалці.
+          const modal = modals[modals.length - 1];
+          const candidates = modal.querySelectorAll(
+            "button.btn-success, button[class*='success'], .modal-footer button, .modal button",
+          );
+          for (const b of candidates) {
+            const text = (b.textContent || "").trim();
+            const inner = b.querySelector(".text")?.textContent?.trim() || "";
+            const combined = (text + " " + inner).trim().toLowerCase();
+            if (isConfirmLabel(combined)) {
+              return b;
+            }
+          }
+          return null;
+        }
+        function check() {
+          if (Date.now() > deadline) {
+            console.log("[SF Guard] Tak button not found within timeout");
+            resolve(false);
+            return;
+          }
+          // Якщо користувач уже підтвердив вручну і tryb активний — вважаємо flow успішним.
+          if (isUrgentActive()) {
+            resolve(true);
+            return;
+          }
+          const takBtn = findTakButton();
+          if (takBtn) {
+            try {
+              takBtn.click();
+              console.log("[SF Guard] Clicked Tak in confirmation modal");
+              resolve(true);
+              return;
+            } catch (e) {
+              console.warn("[SF Guard] Tak click error:", e);
+            }
+          }
+          setTimeout(check, 200);
+        }
+        setTimeout(check, 150);
+      });
+    }
+
+    /** Збирає стан чекбоксів з модалки друку. Повертає null, якщо таблиці нема в DOM. */
+    function savePrintModalState() {
+      const list = getActivePrintList();
+      if (!list) return null;
+      const ids = [];
+      const comments = [];
+      const detriments = [];
+      list
+        .querySelectorAll('input[name="ids[]"]:checked')
+        .forEach((inp) => ids.push(inp.value));
+      list
+        .querySelectorAll('input[name="comments[]"]:checked')
+        .forEach((inp) => comments.push(inp.value));
+      list
+        .querySelectorAll('input[name="detriments[]"]:checked')
+        .forEach((inp) => detriments.push(inp.value));
+      const updateEl = document.getElementById("updateAfterPrint");
+      const updateAfterPrint = updateEl ? !!updateEl.checked : true;
+      return { ids, comments, detriments, updateAfterPrint };
+    }
+
+    /** Відновлює стан чекбоксів у модалці друку; викликає change для оновлення логіки сторінки. */
+    function restorePrintModalState(state) {
+      if (!state) return;
+      const list = getActivePrintList();
+      if (!list) {
+        console.log("[SF Guard] Print list not in DOM, cannot restore state");
+        return;
+      }
+      const fireChange = (inp) => {
+        try {
+          inp.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch (e) {}
+      };
+      list.querySelectorAll('input[name="ids[]"]').forEach((inp) => {
+        inp.checked = state.ids.indexOf(inp.value) !== -1;
+        fireChange(inp);
+      });
+      list.querySelectorAll('input[name="comments[]"]').forEach((inp) => {
+        inp.checked = state.comments.indexOf(inp.value) !== -1;
+        fireChange(inp);
+      });
+      list.querySelectorAll('input[name="detriments[]"]').forEach((inp) => {
+        inp.checked = state.detriments.indexOf(inp.value) !== -1;
+        fireChange(inp);
+      });
+      const updateEl = document.getElementById("updateAfterPrint");
+      if (updateEl) {
+        updateEl.checked = !!state.updateAfterPrint;
+        fireChange(updateEl);
+      }
+      console.log("[SF Guard] Restored print modal checkbox state");
+    }
+
+    /** Відкриває модалку "Dokumenty do wydruku", якщо вона закрита. Resolve(true) коли таблиця в DOM. */
+    function ensurePrintModalOpen() {
+      if (getActivePrintList()) {
+        return Promise.resolve(true);
+      }
+      const openBtn =
+        document.querySelector(
+          'button.smc-auto-modal[url^="/dmg_case/print_document/list/"]',
+        ) ||
+        document.querySelector(
+          'button.btn-flow-status.smc-auto-modal[url*="print_document/list"]',
+        );
+      if (!openBtn) return Promise.resolve(false);
+      try {
+        openBtn.click();
+      } catch (e) {
+        console.warn("[SF Guard] Click to open print modal error:", e);
+        return Promise.resolve(false);
+      }
+      const deadline = Date.now() + 6000;
+      return new Promise((resolve) => {
+        function check() {
+          if (getActivePrintList()) {
+            resolve(true);
+            return;
+          }
+          if (Date.now() > deadline) {
+            resolve(false);
+            return;
+          }
+          setTimeout(check, 100);
+        }
+        setTimeout(check, 200);
+      });
+    }
+
+    /** Викликає нативну SF-функцію друку обраних документів (кнопка "Drukuj zaznaczone"). */
+    async function runBulkPrint() {
+      const state = savedBulkPrintState;
+      const expectedIdsCount = state?.ids?.length || 0;
+
+      if (state && expectedIdsCount > 0) {
+        let restored = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const list = getActivePrintList();
+          if (!list) {
+            const opened = await ensurePrintModalOpen();
+            if (!opened) {
+              console.warn("[SF Guard] Could not open print modal for restore");
+              await new Promise((r) => setTimeout(r, 300));
+              continue;
+            }
+            await new Promise((r) => setTimeout(r, 300));
+          }
+          restorePrintModalState(state);
+          await new Promise((r) => setTimeout(r, 220));
+          // Повторний restore для стабільності, бо SF інколи перезаписує checkboxes після re-render.
+          restorePrintModalState(state);
+          await new Promise((r) => setTimeout(r, 220));
+          const selectedNow = document.querySelectorAll(
+            '.modal.in .print-documents-list input[name="ids[]"]:checked, .modal.show .print-documents-list input[name="ids[]"]:checked',
+          ).length;
+          if (selectedNow >= expectedIdsCount) {
+            restored = true;
+            console.log(
+              "[SF Guard] Bulk print state restored:",
+              selectedNow,
+              "selected",
+            );
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        if (!restored) {
+          console.warn(
+            "[SF Guard] Bulk print aborted: could not restore selected ids",
+          );
+          return;
+        }
+      }
+
+      const w = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+      if (typeof w.printDocuments === "function") {
+        let selectedBeforePrint = document.querySelectorAll(
+          '.modal.in .print-documents-list input[name="ids[]"]:checked, .modal.show .print-documents-list input[name="ids[]"]:checked',
+        ).length;
+        if (state && expectedIdsCount > 0 && selectedBeforePrint === 0) {
+          const opened = await ensurePrintModalOpen();
+          if (opened) {
+            restorePrintModalState(state);
+            await new Promise((r) => setTimeout(r, 220));
+            selectedBeforePrint = document.querySelectorAll(
+              '.modal.in .print-documents-list input[name="ids[]"]:checked, .modal.show .print-documents-list input[name="ids[]"]:checked',
+            ).length;
+          }
+        }
+        if (state && expectedIdsCount > 0 && selectedBeforePrint === 0) {
+          console.warn(
+            "[SF Guard] Bulk print aborted: no selected ids before printDocuments",
+          );
+          return;
+        }
+        w.printDocuments();
+        savedBulkPrintState = null;
+        console.log("[SF Guard] Bulk print: printDocuments() called");
+      } else {
+        console.warn("[SF Guard] printDocuments not found");
+      }
+    }
+
+    function showGuardModal(opts) {
+      const {
+        message = "Nie zaznaczono daty końca naprawy i trybu. Czy chcesz to wydrukować?",
+        onSetDate,
+        onSetUrgent,
+        onPrintAnyway,
+      } = opts;
+      const overlay = ce("div", {
+        className: "sf-guard-overlay",
+        style:
+          "position:fixed;inset:0;background:rgba(0,0,0,.45);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:99999;",
+      });
+      const box = ce("div", {
+        style:
+          "background:#fff;border-radius:8px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.25);overflow:hidden;font-family:Arial,Helvetica,sans-serif;",
+      });
+      const header = ce("div", {
+        style:
+          "background:#4A4A4A;color:#fff;padding:12px 40px 12px 16px;font-size:16px;font-weight:600;position:relative;",
+      });
+      header.textContent = "Druk — wymagania";
+      const closeBtn = ce("button", {
+        type: "button",
+        textContent: "×",
+        style:
+          "position:absolute;top:50%;right:8px;transform:translateY(-50%);width:28px;height:28px;border:none;background:transparent;color:#fff;font-size:22px;line-height:1;cursor:pointer;padding:0;border-radius:4px;",
+      });
+      closeBtn.addEventListener("click", () => overlay.remove());
+      const body = ce("div", {
+        style: "padding:20px 16px;color:#333;font-size:14px;line-height:1.5;",
+      });
+      body.append(ce("p", { textContent: message, style: "margin:0;" }));
+      const footer = ce("div", {
+        style:
+          "background:#F5F5F5;border-top:1px solid #E0E0E0;padding:12px 16px;text-align:right;",
+      });
+      const btnWrap = ce("div", {
+        style:
+          "display:inline-flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;",
+      });
+      const btnStyle =
+        "padding:8px 16px;cursor:pointer;border:none;border-radius:4px;font-size:14px;font-weight:bold;font-family:inherit;";
+      const btnSecondary = btnStyle + "background:#F2A64E;color:#fff;";
+      const btnPrimary = btnStyle + "background:#5CB85C;color:#fff;";
+
+      if (onSetDate) {
+        const b = ce("button", {
+          textContent: "Wprowadzić datę",
+          style: btnSecondary,
+        });
+        b.addEventListener("click", () => {
+          overlay.remove();
+          onSetDate();
+        });
+        btnWrap.append(b);
+      }
+      if (onSetUrgent) {
+        const b = ce("button", {
+          textContent: "Zaznaczyć tryb",
+          style: btnSecondary,
+        });
+        b.addEventListener("click", () => {
+          overlay.remove();
+          onSetUrgent();
+        });
+        btnWrap.append(b);
+      }
+      if (onPrintAnyway) {
+        const b = ce("button", {
+          textContent: "Drukuj",
+          style: btnPrimary,
+        });
+        b.addEventListener("click", () => {
+          overlay.remove();
+          onPrintAnyway();
+        });
+        btnWrap.append(b);
+      }
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) overlay.remove();
+      });
+      header.append(closeBtn);
+      box.append(header, body, footer);
+      footer.append(btnWrap);
+      overlay.append(box);
+      document.body.appendChild(overlay);
+    }
+
+    function closeGuardOverlays() {
+      document
+        .querySelectorAll(".sf-guard-overlay")
+        .forEach((el) => el.remove());
+    }
+
+    function injectModalStyles() {
+      if (document.getElementById("sf-guard-modal-styles")) return;
+      const style = ce("style", {
+        id: "sf-guard-modal-styles",
+        textContent: ".sf-guard-overlay button:hover{opacity:.9;}",
+      });
+      document.head.appendChild(style);
+    }
+
+    async function runGuard(printUrl, printBtn, opts) {
+      opts = opts || {};
+      const isBulk = opts.bulk === true;
+
+      const caseId = getCaseId();
+      const dateRaw = await getRepairEndDate();
+      const dateOk = repairEndDateValid(dateRaw);
+      const urgentActive = isUrgentActive();
+      const urgentNoAccess = getUrgentNoAccessReason();
+      const samolikwidacja = isSelfSettlement();
+
+      const proceedPrint = () => {
+        if (isBulk) runBulkPrint();
+        else {
+          bypassGuardOnce = true;
+          openPrintUrl(printUrl);
+        }
+      };
+
+      /* Модалку не показуємо тільки якщо є і дата, і триб — тоді одразу друк (як на порталі СФ). */
+      if (dateOk && urgentActive) {
+        console.log("[SF Guard] Data i tryb OK, druk bez modalki");
+        proceedPrint();
+        return;
+      }
+
+      const missing = [];
+      if (!dateOk) missing.push("data");
+      if (!urgentActive) {
+        missing.push(urgentNoAccess ? "tryb (brak dostępu)" : "tryb");
+      }
+      const msg = `Nie zaznaczone: ${missing.join(" / ")}. Czy chcesz to wydrukować?`;
+
+      showGuardModal({
+        message: msg,
+        onSetDate: dateOk
+          ? undefined
+          : function onSetDate() {
+              if (!caseId) {
+                console.warn("[SF Guard] No caseId for Set date");
+                return;
+              }
+              // Гарантовано прибираємо нашу модалку перед відкриттям SF-модалки дати.
+              closeGuardOverlays();
+              const w =
+                typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+              if (typeof w.smcAutoModal === "function") {
+                w.smcAutoModal("/dmg_case/repair_date_new_service/" + caseId);
+              }
+              console.log(
+                "[SF Guard] Opened date modal, waiting for close then continuing print",
+              );
+              (async () => {
+                const zapiszClicked = await waitForZapiszClick(120000);
+                if (!zapiszClicked) {
+                  console.log(
+                    "[SF Guard] Set date: Zapisz click not detected, waiting for close and re-checking date",
+                  );
+                }
+                const dateApplied = await waitForValidRepairDate(25000);
+                if (!dateApplied) {
+                  console.log(
+                    "[SF Guard] Set date: date still invalid after save, stopping print",
+                  );
+                  return;
+                }
+                console.log(
+                  "[SF Guard] Date modal saved, proceeding with print",
+                );
+                proceedPrint();
+              })();
+            },
+        onSetUrgent() {
+          if (isBulk) {
+            const currentBulkState = savePrintModalState();
+            if (currentBulkState && (currentBulkState.ids?.length || 0) > 0) {
+              savedBulkPrintState = currentBulkState;
+              console.log(
+                "[SF Guard] Refreshed bulk state before urgent flow:",
+                currentBulkState.ids.length,
+                "doc(s)",
+              );
+            }
+          }
+          const btn = findUrgentButton();
+          if (!btn) {
+            showGuardModal({
+              message: "Brak dostępu do zmiany trybu. Zadzwoń do operatora.",
+              onPrintAnyway: () => runGuard(printUrl, printBtn, opts),
+            });
+            return;
+          }
+          if (getUrgentNoAccessReason()) {
+            showGuardModal({
+              message: "Brak dostępu do zmiany trybu. Zadzwoń do operatora.",
+              onPrintAnyway: () => runGuard(printUrl, printBtn, opts),
+            });
+            return;
+          }
+          try {
+            btn.click();
+            console.log(
+              "[SF Guard] Clicked urgent button, waiting for Tak then continuing print",
+            );
+          } catch (e) {
+            console.warn("[SF Guard] Urgent click error:", e);
+            return;
+          }
+          (async () => {
+            const takClicked = await waitForAndClickTakButton(8000);
+            if (!takClicked) {
+              // Остання перевірка: можливо оператор натиснув підтвердження вручну раніше.
+              await new Promise((r) => setTimeout(r, 250));
+              if (!isUrgentActive()) {
+                console.log("[SF Guard] Urgent flow aborted: Tak not clicked");
+                return;
+              }
+              console.log(
+                "[SF Guard] Tak not detected, but tryb is active; continuing",
+              );
+            }
+            await new Promise((r) => setTimeout(r, AFTER_TAK_DELAY_MS));
+            await waitForModalClose(1200);
+            await new Promise((r) => setTimeout(r, AFTER_MODAL_CLOSE_DELAY_MS));
+            console.log("[SF Guard] Urgent flow done, proceeding with print");
+            proceedPrint();
+          })();
+        },
+        onPrintAnyway: proceedPrint,
+      });
+    }
+
+    function onDocumentClick(e) {
+      if (location.host !== HOST) return;
+
+      const bulkBtn = e.target.closest("#printAll, button#printAll");
+      if (bulkBtn) {
+        savedBulkPrintState = savePrintModalState();
+        if (!savedBulkPrintState || savedBulkPrintState.ids.length === 0) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        console.log(
+          "[SF Guard] Saved bulk print state for",
+          savedBulkPrintState.ids.length,
+          "doc(s)",
+        );
+        runGuard(null, null, { bulk: true }).catch((err) =>
+          console.warn("[SF Guard] runGuard bulk error:", err),
+        );
+        return;
+      }
+
+      const btn = e.target.closest("button.document-print[url]");
+      if (!btn) return;
+      const printUrl = btn.getAttribute("url");
+      if (!printUrl) return;
+
+      if (bypassGuardOnce) {
+        bypassGuardOnce = false;
+        openPrintUrl(printUrl);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+      runGuard(printUrl, btn).catch((err) =>
+        console.warn("[SF Guard] runGuard error:", err),
+      );
+    }
+
+    function init() {
+      if (location.host !== HOST) {
+        console.log("[SF Guard] Skipped (not on " + HOST + ")");
+        return;
+      }
+      injectModalStyles();
+      document.addEventListener("click", onDocumentClick, true);
+      console.log("[SF Guard] init OK");
+    }
+
+    return { init };
+  })();
+
+  /***************************************************************************
    * BOOT
    ***************************************************************************/
-  MenuHider.initOnce();
-  MenuHider.rearm();
+  const isArvalPage = () => location.host === "serwisarval.pl";
+  if (isArvalPage()) {
+    MenuHider.initOnce();
+    MenuHider.rearm();
+  }
 
   const bootDates = () => DateCol.init();
   const bootChat = () => ChatTools.init();
   const bootToasts = () => ToastScanner.init();
+  const bootSF = () => SFGuard.init();
 
-  if (document.readyState === "loading") {
-    document.addEventListener(
-      "DOMContentLoaded",
-      () => {
-        bootDates();
-        bootChat();
-        bootToasts();
-      },
-      { once: true },
-    );
-  } else {
+  const boot = () => {
     bootDates();
     bootChat();
-    bootToasts();
+    if (isArvalPage()) bootToasts();
+    bootSF();
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot, { once: true });
+  } else {
+    boot();
   }
 })();
